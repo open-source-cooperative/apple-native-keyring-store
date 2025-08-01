@@ -1,0 +1,14 @@
+[package]
+authors = ["Daniel Brotsky <dev@brotsky.com>"]
+description = "Cross-platform library for managing passwords/secrets"
+homepage = "https://github.com/open-source-cooperative/apple-native-keyring-store"
+keywords = ["password", "secret", "credential", "keychain", "cross-platform"]
+license = "MIT OR Apache-2.0"
+name = "apple-native-keyring"
+repository = "https://github.com/open-source-cooperative/apple-native-keyring-store.git"
+version = "0.1.0"
+edition = "2024"
+exclude = [".github"]
+readme = "README.md"
+
+[dependencies]
