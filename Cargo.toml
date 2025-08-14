@@ -4,11 +4,38 @@ description = "Cross-platform library for managing passwords/secrets"
 homepage = "https://github.com/open-source-cooperative/apple-native-keyring-store"
 keywords = ["password", "secret", "credential", "keychain", "cross-platform"]
 license = "MIT OR Apache-2.0"
-name = "apple-native-keyring"
+name = "apple-native-keyring-store"
 repository = "https://github.com/open-source-cooperative/apple-native-keyring-store.git"
 version = "0.1.0"
+rust-version = "1.85"
 edition = "2024"
 exclude = [".github"]
 readme = "README.md"
 
+[[example]]
+name = "itemoptions"
+path = "examples/item_options.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "instantiation"
+
 [dependencies]
+keyring-core = { version = "0.4" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { version = "3", features=["OSX_10_13"], git = "https://github.com/brotskydotcom/rust-security-framework", branch = "composite" }
+security-framework-sys = { version = "2", features=["OSX_10_13"], git = "https://github.com/brotskydotcom/rust-security-framework", branch = "composite" }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+security-framework = { version = "3", features=["OSX_10_13"], git = "https://github.com/brotskydotcom/rust-security-framework", branch = "composite" }
+security-framework-sys = { version = "2", features=["OSX_10_13"], git = "https://github.com/brotskydotcom/rust-security-framework", branch = "composite" }
+
+[dev-dependencies]
+fastrand = "2"
+env_logger = "0.11"
+log = "0.4"
+
+[package.metadata.docs.rs]
+default-target = "aarch64-apple-darwin"
+targets = ["aarch64-apple-darwin", "aarch64-apple-ios"]
