@@ -247,7 +247,8 @@ impl CredentialStoreApi for Store {
     }
 
     /// See the keychain-core API docs.
-    ///     // The (optional) search spec keys allowed are `service` and `user`. They
+    ///
+    /// The (optional) search spec keys allowed are `service` and `user`. They
     /// are matched case-sensitively against the service and account attributes
     /// of the generic passwords in the store's configured keychain. A wrapper
     /// for each matching credential is returned. If no `service` or `user` is
