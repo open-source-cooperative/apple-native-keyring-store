@@ -5,8 +5,8 @@ use log::debug;
 
 use keyring_core::{CredentialStore, Entry, Error, api::CredentialPersistence, get_default_store};
 
-use super::protected::Cred;
 use super::protected::Store;
+use super::protected::{AccessPolicy, Cred};
 
 static SET_STORE: Once = Once::new();
 
@@ -102,11 +102,11 @@ pub fn test_round_trip_secret(case: &str, entry: &Entry, in_secret: &[u8]) {
 
 #[test]
 fn test_invalid_parameter() {
-    let credential = Cred::build("service", "", false, false);
+    let credential = Cred::build("service", "", Default::default(), false);
     assert!(matches!(credential, Err(Error::Invalid(_, _))));
-    let credential = Cred::build("", "service", false, false);
+    let credential = Cred::build("", "service", Default::default(), false);
     assert!(matches!(credential, Err(Error::Invalid(_, _))));
-    let credential = Cred::build("any", "any", true, true);
+    let credential = Cred::build("any", "any", AccessPolicy::RequireUserPresence, true);
     assert!(matches!(credential, Err(Error::Invalid(_, _))));
 }
 

@@ -7,7 +7,6 @@ fn main() {
     report_error("login keychain sample", login_keychain_sample());
     report_error("system keychain sample", system_keychain_sample());
     report_error("protected keychain sample", protected_keychain_sample());
-    report_error("biometric keychain sample", biometric_keychain_sample());
     report_error("cloud keychain sample", cloud_keychain_sample());
 }
 
@@ -38,38 +37,16 @@ fn protected_keychain_sample() -> Result<()> {
     e1.set_password("protected keychain test succeeded")?;
     println!("The test password is '{:?}'", e1.get_password()?);
     e1.delete_credential()?;
+    // don't require unlock on a specific entry
+    let mods = HashMap::from([("access-policy", "after-first-unlock")]);
+    let e1 = Entry::new_with_modifiers("test-protected-service", "test-protected-user", &mods)?;
+    e1.set_password("after-first-access, protected keychain test succeeded")?;
+    println!("The test password is '{:?}'", e1.get_password()?);
+    e1.delete_credential()?;
     // require biometric authentication on a specific entry
-    let mods = HashMap::from([("require-user-presence", "true")]);
+    let mods = HashMap::from([("access-policy", "require-user-presence")]);
     let e1 = Entry::new_with_modifiers("test-protected-service", "test-protected-user", &mods)?;
     e1.set_password("biometric, protected keychain test succeeded")?;
-    println!("The test password is '{:?}'", e1.get_password()?);
-    e1.delete_credential()?;
-    keyring_core::unset_default_store();
-    // require biometric authentication on all created entries
-    let config = HashMap::from([("require-user-presence", "true")]);
-    keyring_core::set_default_store(protected::Store::new_with_configuration(&config)?);
-    let e1 = Entry::new("test-protected-service", "test-protected-user")?;
-    e1.set_password("this is a protected test")?;
-    println!("The test password is '{:?}'", e1.get_password()?);
-    e1.delete_credential()?;
-    keyring_core::unset_default_store();
-    Ok(())
-}
-
-fn biometric_keychain_sample() -> Result<()> {
-    keyring_core::set_default_store(protected::Store::new()?);
-    // require biometric authentication on a specific entry
-    let mods = HashMap::from([("require-user-presence", "true")]);
-    let e1 = Entry::new_with_modifiers("test-protected-service", "test-protected-user", &mods)?;
-    e1.set_password("individual, biometric test succeeded")?;
-    println!("The test password is '{:?}'", e1.get_password()?);
-    e1.delete_credential()?;
-    keyring_core::unset_default_store();
-    // require biometric authentication on all created entries
-    let config = HashMap::from([("require-user-presence", "true")]);
-    keyring_core::set_default_store(protected::Store::new_with_configuration(&config)?);
-    let e1 = Entry::new("test-protected-service", "test-protected-user")?;
-    e1.set_password("store-wide, biometric test succeeded")?;
     println!("The test password is '{:?}'", e1.get_password()?);
     e1.delete_credential()?;
     keyring_core::unset_default_store();
