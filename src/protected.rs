@@ -30,13 +30,8 @@ _service_, the protected store does not allow ambiguity.
 
 Protected data items _in the local store_ can be created with varying levels of
 protection. This module uses a default access policy of "accessible when device
-is unlocked", but the option to use a policy of "accessible only when the user is
-present" (meaning the user will have to do a biometric-based or passcode-based
-authorization at the time of access) is available. If you want to create a single
-entry with biometric access, use `Entry::new_with_modifiers` and supply a
-`require-user-presence` modifier value of `true`. If you want this to be the
-default for all the entries you create, use [Store::new_with_configuration] and
-supply a `require-user-presence` configuration value of `true`.
+is unlocked", but entry modifiers can be used to change this. See the docs for
+[build](Store::build) for details.
 
 ## Attributes
 
@@ -55,7 +50,9 @@ ignore access-controlled secrets, and search results will never include them.
 The only way to manage an access-controlled secret is to know its service and
 user and to create an entry using them.
  */
+
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -63,16 +60,48 @@ use security_framework::access_control::{ProtectionMode, SecAccessControl};
 use security_framework::base::Error;
 use security_framework::item;
 use security_framework::passwords::{
-    AccessControlOptions, PasswordOptions, delete_generic_password,
-    delete_generic_password_options, generic_password, get_generic_password, set_generic_password,
+    AccessControlOptions, PasswordOptions, delete_generic_password, get_generic_password,
     set_generic_password_options,
 };
+#[cfg(feature = "sync")]
+use security_framework::passwords::{delete_generic_password_options, generic_password};
 
 use keyring_core::{
     CredentialPersistence, Entry, Error as ErrorCode, Result,
     api::{Credential, CredentialApi, CredentialStoreApi},
     attributes::parse_attributes,
 };
+
+/// Access policies for protected data items.
+///
+/// These are recognized case-insensitively from their
+/// camel-cased or snake-cased equivalents, as
+/// well as the string "default".
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum AccessPolicy {
+    AfterFirstUnlock,
+    #[default]
+    WhenUnlocked,
+    RequireUserPresence,
+}
+
+impl FromStr for AccessPolicy {
+    type Err = ErrorCode;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "after-first-unlock" | "afterfirstunlock" => Ok(AccessPolicy::AfterFirstUnlock),
+            "when-unlocked" | "whenunlocked" | "default" => Ok(AccessPolicy::WhenUnlocked),
+            "require-user-presence" | "requireuserpresence" => {
+                Ok(AccessPolicy::RequireUserPresence)
+            }
+            _ => Err(ErrorCode::Invalid(
+                "access-policy".to_string(),
+                format!("unknown value: {}", s),
+            )),
+        }
+    }
+}
 
 /// The representation of a generic Keychain credential.
 ///
@@ -83,16 +112,30 @@ use keyring_core::{
 pub struct Cred {
     pub service: String,
     pub account: String,
-    pub require_user_presence: bool,
+    pub access_policy: AccessPolicy,
     pub cloud_synchronize: bool,
 }
 
 impl CredentialApi for Cred {
     /// See the keychain-core API docs.
     fn set_secret(&self, secret: &[u8]) -> Result<()> {
-        if self.require_user_presence || self.cloud_synchronize {
-            let mut options = PasswordOptions::new_generic_password(&self.service, &self.account);
-            if self.require_user_presence {
+        let mut options = PasswordOptions::new_generic_password(&self.service, &self.account);
+        #[cfg(feature = "sync")]
+        if self.cloud_synchronize {
+            options.set_access_synchronized(Some(true));
+        }
+        match self.access_policy {
+            AccessPolicy::AfterFirstUnlock => {
+                options.set_access_control(
+                    SecAccessControl::create_with_protection(
+                        Some(ProtectionMode::AccessibleAfterFirstUnlock),
+                        Default::default(),
+                    )
+                    .map_err(decode_error)?,
+                );
+            }
+            AccessPolicy::WhenUnlocked => {}
+            AccessPolicy::RequireUserPresence => {
                 let access_control = SecAccessControl::create_with_protection(
                     Some(ProtectionMode::AccessibleWhenUnlocked),
                     AccessControlOptions::USER_PRESENCE.bits(),
@@ -100,18 +143,14 @@ impl CredentialApi for Cred {
                 .map_err(decode_error)?;
                 options.set_access_control(access_control);
             }
-            if self.cloud_synchronize {
-                options.set_access_synchronized(Some(true));
-            }
-            set_generic_password_options(secret, options).map_err(decode_error)?;
-        } else {
-            set_generic_password(&self.service, &self.account, secret).map_err(decode_error)?;
         }
+        set_generic_password_options(secret, options).map_err(decode_error)?;
         Ok(())
     }
 
     /// See the keychain-core API docs.
     fn get_secret(&self) -> Result<Vec<u8>> {
+        #[cfg(feature = "sync")]
         if self.cloud_synchronize {
             let mut options = PasswordOptions::new_generic_password(&self.service, &self.account);
             options.set_access_synchronized(Some(true));
@@ -119,10 +158,13 @@ impl CredentialApi for Cred {
         } else {
             get_generic_password(&self.service, &self.account).map_err(decode_error)
         }
+        #[cfg(not(feature = "sync"))]
+        get_generic_password(&self.service, &self.account).map_err(decode_error)
     }
 
     /// See the keychain-core API docs.
     fn delete_credential(&self) -> Result<()> {
+        #[cfg(feature = "sync")]
         if self.cloud_synchronize {
             let mut options = PasswordOptions::new_generic_password(&self.service, &self.account);
             options.set_access_synchronized(Some(true));
@@ -130,6 +172,8 @@ impl CredentialApi for Cred {
         } else {
             delete_generic_password(&self.service, &self.account).map_err(decode_error)?;
         }
+        #[cfg(not(feature = "sync"))]
+        delete_generic_password(&self.service, &self.account).map_err(decode_error)?;
         Ok(())
     }
 
@@ -164,10 +208,13 @@ impl Cred {
     /// This will fail if the service or user strings are empty,
     /// because empty attribute values act as wildcards in the
     /// Keychain Services API.
+    ///
+    /// This will fail if the access policy is not compatible
+    /// with the cloud-sync policy.
     pub fn build(
         service: &str,
         user: &str,
-        require_user_presence: bool,
+        access_policy: AccessPolicy,
         cloud_synchronize: bool,
     ) -> Result<Entry> {
         if service.is_empty() {
@@ -182,7 +229,7 @@ impl Cred {
                 "cannot be empty".to_string(),
             ));
         }
-        if require_user_presence && cloud_synchronize {
+        if cloud_synchronize && access_policy == AccessPolicy::RequireUserPresence {
             return Err(ErrorCode::Invalid(
                 "require-user-presence".to_string(),
                 "not allowed in cloud-synchronized store".to_string(),
@@ -191,7 +238,7 @@ impl Cred {
         let cred = Self {
             service: service.to_string(),
             account: user.to_string(),
-            require_user_presence,
+            access_policy,
             cloud_synchronize,
         };
         Ok(Entry::new_with_credential(Arc::new(cred)))
@@ -203,67 +250,51 @@ impl Cred {
 pub struct Store {
     id: String,
     cloud_synchronize: bool,
-    require_user_presence: bool,
 }
 
 impl Store {
     /// Create a default store, which does *not* synchronize with the cloud.
     pub fn new() -> Result<Arc<Self>> {
-        Ok(Self::new_internal(false, false))
+        Ok(Self::new_internal(false))
     }
 
     /// Create a configured store.
     ///
-    /// The allowed configuration keys are `cloud-sync` (`true` or `false`) and
-    /// `require-user-presence` (`true` or `false`). You cannot require user presence
-    /// if the store is being synchronized to the cloud. A per-entry modification
-    /// of `require-user-presence` overrides the store configuration.
+    /// The only configuration key is `cloud-sync` (`true` or `false`).
     pub fn new_with_configuration(config: &HashMap<&str, &str>) -> Result<Arc<Self>> {
-        let config = parse_attributes(&["cloud-sync", "require-user-presence"], config)?;
+        let config = parse_attributes(&["cloud-sync"], Some(config))?;
         let mut cloud_synchronize = false;
-        let mut require_user_presence = false;
         if let Some(option) = config.get("cloud-sync") {
-            if option != "true" && option != "false" {
-                return Err(ErrorCode::Invalid(
+            cloud_synchronize = option.parse().map_err(|_| {
+                ErrorCode::Invalid(
                     String::from("cloud-sync"),
                     String::from("must be true or false"),
-                ));
-            }
-            cloud_synchronize = option == "true"
+                )
+            })?;
         }
-        if let Some(option) = config.get("require-user-presence") {
-            if option != "true" && option != "false" {
-                return Err(ErrorCode::Invalid(
-                    String::from("require-user-presence"),
-                    String::from("must be true or false"),
-                ));
-            }
-            require_user_presence = option == "true"
-        }
-        if cloud_synchronize && require_user_presence {
-            return Err(ErrorCode::Invalid(
-                String::from("require-user-presence"),
-                String::from("not allowed in cloud-synchronized store"),
+        if cloud_synchronize && !cfg!(feature = "sync") {
+            return Err(ErrorCode::NotSupportedByStore(
+                "cloud-sync config requires a build with the \"sync\" feature".to_string(),
             ));
         }
-        Ok(Self::new_internal(cloud_synchronize, require_user_presence))
+        Ok(Self::new_internal(cloud_synchronize))
     }
 
-    fn new_internal(cloud_synchronize: bool, require_user_presence: bool) -> Arc<Self> {
+    fn new_internal(cloud_synchronize: bool) -> Arc<Self> {
         let now = SystemTime::now();
         let elapsed = if now.lt(&UNIX_EPOCH) {
             UNIX_EPOCH.duration_since(now).unwrap()
         } else {
             now.duration_since(UNIX_EPOCH).unwrap()
         };
+        let id = format!(
+            "Crate version {}, Instantiated at {}",
+            env!("CARGO_PKG_VERSION"),
+            elapsed.as_secs_f64()
+        );
         Arc::new(Store {
-            id: format!(
-                "Crate version {}, Instantiated at {}",
-                env!("CARGO_PKG_VERSION"),
-                elapsed.as_secs_f64()
-            ),
+            id,
             cloud_synchronize,
-            require_user_presence,
         })
     }
 }
@@ -281,29 +312,25 @@ impl CredentialStoreApi for Store {
 
     /// See the keychain-core API docs.
     ///
-    /// The only allowed modifier is `require-user-presence`, which must be
-    /// "true" or "false" (case-sensitive).
+    /// The only allowed modifier is `access-policy`, which can be one of
+    /// `after-first-unlock`, `when-unlocked` (the default), or
+    /// `require-user-presence` (which requires a user-performed unlock action
+    /// via biometrics or passcode whenever the credential is accessed).
+    ///
+    /// Cloud-synchronized stores do not allow a `require-user-presence` policy
+    /// because the user need not be present during cloud synchronization.
     fn build(
         &self,
         service: &str,
         user: &str,
         modifiers: Option<&HashMap<&str, &str>>,
     ) -> Result<Entry> {
-        let mods = parse_attributes(
-            &["require-user-presence"],
-            modifiers.unwrap_or(&HashMap::new()),
-        )?;
-        let mut require_user_presence = self.require_user_presence;
-        if let Some(option) = mods.get("require-user-presence") {
-            if option != "true" && option != "false" {
-                return Err(ErrorCode::Invalid(
-                    String::from("require-user-presence"),
-                    String::from("must be true or false"),
-                ));
-            }
-            require_user_presence = option == "true"
+        let mods = parse_attributes(&["access-policy"], modifiers)?;
+        let mut access_policy = AccessPolicy::default();
+        if let Some(option) = mods.get("access-policy") {
+            access_policy = option.parse()?;
         }
-        Cred::build(service, user, require_user_presence, self.cloud_synchronize)
+        Cred::build(service, user, access_policy, self.cloud_synchronize)
     }
 
     /// See the keychain-core API docs.
@@ -311,15 +338,17 @@ impl CredentialStoreApi for Store {
     /// The allowed search attributes are `service` and `user`, which
     /// must match a credential's values exactly (case-sensitive)
     /// for a wrapper over that credential to be returned. An empty search
-    /// spec will return every credential in the store.
+    /// spec will return every credential in the store except those
+    /// that require user presence.
     fn search(&self, spec: &HashMap<&str, &str>) -> Result<Vec<Entry>> {
-        let spec = parse_attributes(&["service", "user", "case-sensitive"], spec)?;
+        let spec = parse_attributes(&["service", "user", "case-sensitive"], Some(spec))?;
         let mut options = item::ItemSearchOptions::new();
         options
             .class(item::ItemClass::generic_password())
             .limit(item::Limit::All)
-            .skip_authenticated_items(true)
             .load_attributes(true);
+        #[cfg(feature = "sync")]
+        options.skip_authenticated_items(true);
         if let Some(service) = spec.get("service") {
             options.service(service);
         }
@@ -339,7 +368,7 @@ impl CredentialStoreApi for Store {
                         let cred = Cred {
                             service: service.to_string(),
                             account: account.to_string(),
-                            require_user_presence: false,
+                            access_policy: AccessPolicy::default(),
                             cloud_synchronize: self.cloud_synchronize,
                         };
                         result.push(Entry::new_with_credential(Arc::new(cred)))

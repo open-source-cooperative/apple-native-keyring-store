@@ -14,13 +14,13 @@ use std::collections::HashMap;
 use std::ffi::{CString, c_char};
 use std::sync::{Arc, LazyLock};
 
+use apple_native_keyring_store::protected::Store;
+use keyring_core::{CredentialStore, Entry, Error, set_default_store};
+#[cfg(feature = "sync")]
 use security_framework::passwords::{
     PasswordOptions, delete_generic_password_options, generic_password,
     set_generic_password_options,
 };
-
-use apple_native_keyring_store::protected::Store;
-use keyring_core::{CredentialStore, Entry, Error, set_default_store};
 
 static SERVICE: &str = "protected-test-item-service";
 static USER: &str = "protected-test-item-account";
@@ -28,7 +28,11 @@ static USER: &str = "protected-test-item-account";
 static LOCAL_STORE: LazyLock<Arc<CredentialStore>> = LazyLock::new(|| Store::new().unwrap());
 
 static SYNC_STORE: LazyLock<Arc<CredentialStore>> = LazyLock::new(|| {
-    let options = HashMap::from([("cloud-sync", "true")]);
+    let options = if cfg!(feature = "sync") {
+        HashMap::from([("cloud-sync", "true")])
+    } else {
+        HashMap::new()
+    };
     Store::new_with_configuration(&options).unwrap()
 });
 
@@ -36,11 +40,11 @@ static OP_STRINGS: &str = "
     create default
     create sensitive
     create sync
-    create sync sensitive
+    create sync insensitive
     set default
     set sensitive
     set sync
-    set sync sensitive
+    set sync insensitive
     get default
     get sync
     delete default
@@ -63,11 +67,11 @@ extern "C" fn test(op: i32) {
         create_default,
         create_sensitive,
         create_sync,
-        create_sync_sensitive,
+        create_sync_insensitive,
         set_default,
         set_sensitive,
         set_sync,
-        set_sync_sensitive,
+        set_sync_insensitive,
         get_default,
         get_sync,
         delete_default,
@@ -97,7 +101,7 @@ fn create_default() {
 
 fn create_sensitive() {
     set_default_store((*LOCAL_STORE).clone());
-    let modifiers = HashMap::from([("require-user-presence", "true")]);
+    let modifiers = HashMap::from([("access-policy", "require-user-presence")]);
     let entry = Entry::new_with_modifiers(SERVICE, USER, &modifiers).unwrap();
     match entry.delete_credential() {
         Ok(_) => println!("There was a prior entry; deleting and recreating sensitive"),
@@ -126,19 +130,19 @@ fn create_sync() {
     }
 }
 
-fn create_sync_sensitive() {
+fn create_sync_insensitive() {
     set_default_store((*SYNC_STORE).clone());
-    let modifiers = HashMap::from([("require-user-presence", "true")]);
+    let modifiers = HashMap::from([("access-policy", "after-first-unlock")]);
     let entry = Entry::new_with_modifiers(SERVICE, USER, &modifiers).unwrap();
     match entry.delete_credential() {
-        Ok(_) => println!("There was a prior entry; deleting and recreating sync sensitive"),
+        Ok(_) => println!("There was a prior entry; deleting and recreating sync-insensitive"),
         Err(Error::NoEntry) => {
-            println!("There was no prior entry; creating sync sensitive")
+            println!("There was no prior entry; creating sync-insensitive")
         }
         Err(err) => println!("Unexpected error: {err:?}"),
     }
-    match entry.set_password("create-time sync sensitive password") {
-        Ok(_) => println!("Successfully set the sync sensitive password"),
+    match entry.set_password("create-time sync-insensitive password") {
+        Ok(_) => println!("Successfully set the sync-insensitive password"),
         Err(err) => println!("Unexpected error: {err:?}"),
     }
 }
@@ -159,7 +163,7 @@ fn set_default() {
 
 fn set_sensitive() {
     set_default_store((*LOCAL_STORE).clone());
-    let modifiers = HashMap::from([("require-user-presence", "true")]);
+    let modifiers = HashMap::from([("access-policy", "require-user-presence")]);
     let entry = Entry::new_with_modifiers(SERVICE, USER, &modifiers).unwrap();
     match entry.get_credential() {
         Ok(_) => println!("There was a prior entry; setting sensitive"),
@@ -186,17 +190,17 @@ fn set_sync() {
     }
 }
 
-fn set_sync_sensitive() {
+fn set_sync_insensitive() {
     set_default_store((*SYNC_STORE).clone());
-    let modifiers = HashMap::from([("require-user-presence", "true")]);
+    let modifiers = HashMap::from([("access-policy", "after-first-unlock")]);
     let entry = Entry::new_with_modifiers(SERVICE, USER, &modifiers).unwrap();
     match entry.get_credential() {
-        Ok(_) => println!("There was a prior entry; setting sensitive"),
-        Err(Error::NoEntry) => println!("There was no prior entry; creating sensitive"),
+        Ok(_) => println!("Existing cloud-sync entry; updating it"),
+        Err(Error::NoEntry) => println!("No existing cloud-sync entry; will create one"),
         Err(err) => println!("Unexpected error: {err:?}"),
     }
-    match entry.set_password("set-time sync sensitive password") {
-        Ok(_) => println!("Successfully set the sync sensitive password"),
+    match entry.set_password("set-time sync-insensitive password") {
+        Ok(_) => println!("Successfully set the sync-insensitive password"),
         Err(err) => println!("Unexpected error: {err:?}"),
     }
 }
@@ -264,6 +268,7 @@ fn search_sync() {
 }
 
 #[allow(dead_code)]
+#[cfg(feature = "sync")]
 fn set_either() {
     let mut options = PasswordOptions::new_generic_password(SERVICE, USER);
     options.set_access_synchronized(None);
@@ -274,6 +279,7 @@ fn set_either() {
 }
 
 #[allow(dead_code)]
+#[cfg(feature = "sync")]
 fn get_either() {
     let mut options = PasswordOptions::new_generic_password(SERVICE, USER);
     options.set_access_synchronized(None);
@@ -284,6 +290,7 @@ fn get_either() {
 }
 
 #[allow(dead_code)]
+#[cfg(feature = "sync")]
 fn delete_either() {
     let mut options = PasswordOptions::new_generic_password(SERVICE, USER);
     options.set_access_synchronized(None);

@@ -189,7 +189,7 @@ impl Store {
     ///
     /// The keychain used can be overridden by a modifier on a specific entry.
     pub fn new_with_configuration(configuration: &HashMap<&str, &str>) -> Result<Arc<Self>> {
-        let config = parse_attributes(&["keychain"], configuration)?;
+        let config = parse_attributes(&["keychain"], Some(configuration))?;
         let mut keychain = MacKeychainDomain::User;
         if let Some(option) = config.get("keychain") {
             keychain = option.parse()?;
@@ -238,7 +238,7 @@ impl CredentialStoreApi for Store {
         user: &str,
         modifiers: Option<&HashMap<&str, &str>>,
     ) -> Result<Entry> {
-        let mods = parse_attributes(&["keychain"], modifiers.unwrap_or(&HashMap::new()))?;
+        let mods = parse_attributes(&["keychain"], modifiers)?;
         let mut keychain = self.keychain.clone();
         if let Some(option) = mods.get("keychain") {
             keychain = option.parse()?;
@@ -247,14 +247,15 @@ impl CredentialStoreApi for Store {
     }
 
     /// See the keychain-core API docs.
-    ///     // The (optional) search spec keys allowed are `service` and `user`. They
+    ///
+    /// The (optional) search spec keys allowed are `service` and `user`. They
     /// are matched case-sensitively against the service and account attributes
     /// of the generic passwords in the store's configured keychain. A wrapper
     /// for each matching credential is returned. If no `service` or `user` is
     /// specified, all credentials in the store's configured keychain are
     /// returned.
     fn search(&self, spec: &HashMap<&str, &str>) -> Result<Vec<Entry>> {
-        let spec = parse_attributes(&["service", "user"], spec)?;
+        let spec = parse_attributes(&["service", "user"], Some(spec))?;
         let keychains = [get_keychain(&self.keychain)?];
         let mut options = item::ItemSearchOptions::new();
         options
@@ -334,8 +335,7 @@ impl std::str::FromStr for MacKeychainDomain {
     /// Convert a keychain specification string to a keychain domain.
     ///
     /// We accept any case in the string,
-    /// but the value has to match a known keychain domain name
-    /// or else we assume the login keychain is meant.
+    /// but the value has to match a known keychain domain name.
     fn from_str(s: &str) -> Result<Self> {
         match s.to_ascii_lowercase().as_str() {
             "user" => Ok(MacKeychainDomain::User),

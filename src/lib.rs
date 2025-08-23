@@ -4,7 +4,10 @@
 
 This is a
 [keyring credential store provider](https://github.com/open-source-cooperative/keyring-rs/wiki/Keyring)
-that stores credentials in the native macOS and iOS secure stores.
+that stores credentials in the native macOS and iOS secure stores. It contains two
+different credential store providers: one for the legacy macOS keychain (in the
+[keychain] module), and one for the newer "protected data" store (in the
+[protected] module).
 
  */
 
