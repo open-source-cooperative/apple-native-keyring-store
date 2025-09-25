@@ -13,7 +13,7 @@ exclude = [".github"]
 readme = "README.md"
 
 [features]
-keychain = ["security-framework"]
+keychain = ["dep:security-framework"]
 protected = ["security-framework/OSX_10_15"]
 
 [[example]]
@@ -51,5 +51,6 @@ linkme = "0.3"
 sudo = "0.6.0"
 
 [package.metadata.docs.rs]
-default-target = "aarch64-apple-darwin"
+all-features = true
 targets = ["aarch64-apple-darwin", "aarch64-apple-ios"]
+default-target = "aarch64-apple-darwin"
