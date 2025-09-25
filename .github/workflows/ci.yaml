@@ -15,6 +15,7 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt, clippy
+          target: aarch64-apple-ios
 
       - name: Format check
         run: cargo fmt --check
@@ -27,7 +28,7 @@ jobs:
 
       - name: Build instantiation example
         run: cargo build --verbose --all-features --example instantiation
-        
+
       - name: Build protected examples
         run: cargo build --target aarch64-apple-ios --verbose --features protected --examples
 
