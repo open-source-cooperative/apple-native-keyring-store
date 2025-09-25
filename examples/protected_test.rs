@@ -1,23 +1,128 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Once};
+/*!
 
-use log::debug;
+# Static library for protected feature testing
+
+This is a static library meant to be linked into the
+[Rust-on-ios test harness](https://github.com/brotskydotcom/rust-on-ios/).
+It provides testing in a provisioned-profile environment for the
+protected data store.
+
+*/
+
+use std::backtrace;
+use std::collections::HashMap;
+use std::ffi::{CString, c_char};
+use std::io::Write;
+use std::panic::catch_unwind;
+use std::sync::{Arc, LazyLock};
+
+use linkme::distributed_slice;
 
 use keyring_core::{CredentialStore, Entry, Error, api::CredentialPersistence, get_default_store};
 
-use super::protected::Store;
-use super::protected::{AccessPolicy, Cred};
+use apple_native_keyring_store::protected::Cred;
+use apple_native_keyring_store::protected::Store;
 
-static SET_STORE: Once = Once::new();
+static OP_STRINGS: &str = "
+    run tests
+    delete all credentials
+    ";
 
-fn usually_goes_in_main() {
-    let _ = env_logger::builder().is_test(true).try_init();
-    keyring_core::set_default_store(Store::new().unwrap());
+static OP_STRING: LazyLock<CString> = LazyLock::new(|| CString::new(OP_STRINGS).unwrap());
+
+#[unsafe(no_mangle)]
+extern "C" fn choices() -> *const c_char {
+    let ret = &*OP_STRING;
+    ret.as_ptr()
 }
 
-#[test]
+#[unsafe(no_mangle)]
+extern "C" fn test(op: i32) {
+    match op {
+        0 => run_tests(),
+        1 => delete_all_credentials(),
+        _ => println!("unexpected op: {op}"),
+    }
+}
+
+fn delete_all_credentials() {
+    let local: Arc<CredentialStore> = Store::new().unwrap();
+    println!("Deleting all non-cloud-synchronized items...");
+    list_and_delete_credentials(local);
+    let mods = HashMap::from([("cloud-sync", "true")]);
+    let cloud: Arc<CredentialStore> = Store::new_with_configuration(&mods).unwrap();
+    println!("Deleting all cloud-synchronized items...");
+    list_and_delete_credentials(cloud);
+    println!("Done.");
+}
+
+fn list_and_delete_credentials(store: Arc<CredentialStore>) {
+    match store.search(&HashMap::from([("show-authentication-ui", "true")])) {
+        Ok(entries) => {
+            if entries.is_empty() {
+                println!("Nothing to delete.");
+                return;
+            }
+            println!("Found {} to delete:", entries.len());
+            for entry in entries {
+                println!("  {:?}", entry.get_specifiers().unwrap());
+                entry.delete_credential().unwrap_or_else(|err| {
+                    println!("Couldn't delete credential: {err:?}");
+                });
+            }
+        }
+        Err(err) => println!("Search failed: {err:?}"),
+    }
+}
+
+#[distributed_slice]
+static TESTS: [fn()];
+
+fn run_tests() {
+    keyring_core::set_default_store(Store::new().unwrap());
+    let mut tests = TESTS.to_vec();
+    tests.reverse();
+    let count = tests.len();
+    println!("running {count} tests:");
+    let mut succeeded = 0;
+    let mut failed = 0;
+    for test in tests {
+        match catch_unwind(test) {
+            Ok(()) => {
+                succeeded += 1;
+                let total = succeeded + failed;
+                print!(".");
+                if total % 5 == 0 {
+                    println!(" {total}/{count}");
+                } else {
+                    std::io::stdout().flush().unwrap();
+                }
+            }
+            Err(err) => {
+                failed += 1;
+                let backtrace = backtrace::Backtrace::force_capture();
+                if backtrace.status() == backtrace::BacktraceStatus::Captured {
+                    println!("Test failed: {err:?}\nBacktrace:\n{backtrace:?}\n")
+                } else {
+                    println!("Test failed: {err:?}\n");
+                }
+            }
+        }
+    }
+    println!("\n{count} tests complete: {succeeded} succeeded, {failed} failed");
+    keyring_core::unset_default_store();
+}
+
+#[distributed_slice(TESTS)]
+fn test_persistence() {
+    assert!(matches!(
+        get_default_store().unwrap().persistence(),
+        CredentialPersistence::UntilDelete
+    ));
+}
+
+#[distributed_slice(TESTS)]
 fn test_store_methods() {
-    SET_STORE.call_once(usually_goes_in_main);
     let store = get_default_store().unwrap();
     let vendor1 = store.vendor();
     let id1 = store.id();
@@ -33,7 +138,6 @@ fn test_store_methods() {
 }
 
 fn entry_new(service: &str, user: &str) -> Entry {
-    SET_STORE.call_once(usually_goes_in_main);
     Entry::new(service, user).unwrap_or_else(|err| {
         panic!("Couldn't create entry (service: {service}, user: {user}): {err:?}")
     })
@@ -100,45 +204,49 @@ pub fn test_round_trip_secret(case: &str, entry: &Entry, in_secret: &[u8]) {
     );
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_invalid_parameter() {
-    let credential = Cred::build("service", "", Default::default(), false);
-    assert!(matches!(credential, Err(Error::Invalid(_, _))));
-    let credential = Cred::build("", "service", Default::default(), false);
-    assert!(matches!(credential, Err(Error::Invalid(_, _))));
-    let credential = Cred::build("any", "any", AccessPolicy::RequireUserPresence, true);
-    assert!(matches!(credential, Err(Error::Invalid(_, _))));
+    Entry::new("service", "").unwrap_err();
+    Entry::new("", "service").unwrap_err();
+    let mods = HashMap::from([("access-policy", "incorrect")]);
+    Entry::new_with_modifiers("service", "user", &mods).unwrap_err();
+    let mods = HashMap::from([("cloud-sync", "true")]);
+    let sync_store: Arc<CredentialStore> = Store::new_with_configuration(&mods).unwrap();
+    let mods = HashMap::from([("access-policy", "anything")]);
+    sync_store
+        .build("service", "user", Some(&mods))
+        .unwrap_err();
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_missing_entry() {
     let name = generate_random_string();
     let entry = entry_new(&name, &name);
     assert!(matches!(entry.get_password(), Err(Error::NoEntry)))
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_empty_password() {
     let name = generate_random_string();
     let in_pass = "";
     test_round_trip("empty password", &entry_new(&name, &name), in_pass);
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_round_trip_ascii_password() {
     let name = generate_random_string();
     let entry = entry_new(&name, &name);
     test_round_trip("ascii password", &entry, "test ascii password");
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_round_trip_non_ascii_password() {
     let name = generate_random_string();
     let entry = entry_new(&name, &name);
     test_round_trip("non-ascii password", &entry, "このきれいな花は桜です");
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_entries_with_same_and_different_specifiers() {
     let name1 = generate_random_string();
     let name2 = generate_random_string();
@@ -154,7 +262,7 @@ fn test_entries_with_same_and_different_specifiers() {
     entry3.delete_credential().unwrap_err();
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_round_trip_random_secret() {
     let name = generate_random_string();
     let entry = entry_new(&name, &name);
@@ -162,7 +270,7 @@ fn test_round_trip_random_secret() {
     test_round_trip_secret("non-ascii password", &entry, secret.as_slice());
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_update() {
     let name = generate_random_string();
     let entry = entry_new(&name, &name);
@@ -174,7 +282,7 @@ fn test_update() {
     );
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_duplicate_entries() {
     let name = generate_random_string();
     let entry1 = entry_new(&name, &name);
@@ -189,16 +297,17 @@ fn test_duplicate_entries() {
     entry2.delete_credential().expect_err("Can delete entry2");
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_get_credential_and_specifiers() {
     let name = generate_random_string();
     let entry1 = entry_new(&name, &name);
     assert!(matches!(entry1.get_credential(), Err(Error::NoEntry)));
     entry1.set_password("password for entry1").unwrap();
     let cred1 = entry1.as_any().downcast_ref::<Cred>().unwrap();
+    assert!(cred1.access_group.is_none());
     let wrapper = entry1.get_credential().unwrap();
     let cred2 = wrapper.as_any().downcast_ref::<Cred>().unwrap();
-    assert_eq!(cred1 as *const _, cred2 as *const _);
+    assert!(cred2.access_group.is_some());
     let (service, user) = wrapper.get_specifiers().unwrap();
     assert_eq!(service, name);
     assert_eq!(user, name);
@@ -207,7 +316,7 @@ fn test_get_credential_and_specifiers() {
     wrapper.delete_credential().unwrap_err();
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_create_then_move() {
     let name = generate_random_string();
     let entry = entry_new(&name, &name);
@@ -227,7 +336,7 @@ fn test_create_then_move() {
     assert!(handle.join().is_ok(), "Couldn't execute on thread")
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_simultaneous_create_then_move() {
     let mut handles = vec![];
     for i in 0..10 {
@@ -247,7 +356,7 @@ fn test_simultaneous_create_then_move() {
     }
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_create_set_then_move() {
     let name = generate_random_string();
     let entry = entry_new(&name, &name);
@@ -263,7 +372,7 @@ fn test_create_set_then_move() {
     assert!(handle.join().is_ok(), "Couldn't execute on thread")
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_simultaneous_create_set_then_move() {
     let mut handles = vec![];
     for i in 0..10 {
@@ -283,7 +392,7 @@ fn test_simultaneous_create_set_then_move() {
     }
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_simultaneous_independent_create_set() {
     let mut handles = vec![];
     for i in 0..10 {
@@ -303,7 +412,7 @@ fn test_simultaneous_independent_create_set() {
     }
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_multiple_create_delete_single_thread() {
     let name = generate_random_string();
     let entry = entry_new(&name, &name);
@@ -317,7 +426,7 @@ fn test_multiple_create_delete_single_thread() {
     }
 }
 
-#[test]
+#[distributed_slice(TESTS)]
 fn test_simultaneous_multiple_create_delete_single_thread() {
     let mut handles = vec![];
     for t in 0..10 {
@@ -341,46 +450,101 @@ fn test_simultaneous_multiple_create_delete_single_thread() {
     }
 }
 
-#[test]
-fn test_search() {
-    SET_STORE.call_once(usually_goes_in_main);
-    let all = Entry::search(&HashMap::new()).unwrap();
-    let all_count = all.len();
-    debug!("Search found {all_count} generic credentials before creating any.");
-    let none = Entry::search(&HashMap::from([("service", ""), ("user", "")])).unwrap();
-    assert!(none.is_empty());
+#[distributed_slice(TESTS)]
+fn test_shared_access_groups() {
     let name = generate_random_string();
-    let bar = format!("{name}-bar");
-    let bam = format!("{name}-bam");
-    let bam_upper = format!("{name}-BAM");
-    let e1 = entry_new(&name, &bar);
-    e1.set_password("e1").unwrap();
-    // uncomment these two lines only if test-threads=1
-    // let all = Entry::search(&HashMap::new()).unwrap();
-    // assert_eq!(all.len(), all_count + 1);
-    let e2 = entry_new(&name, &bam);
-    e2.set_password("e2").unwrap();
-    let one = Entry::search(&HashMap::from([("user", bam.as_str())])).unwrap();
-    assert_eq!(one.len(), 1);
-    let zero = Entry::search(&HashMap::from([("user", bam_upper.as_str())])).unwrap();
-    assert_eq!(zero.len(), 0);
-    let one = Entry::search(&HashMap::from([
-        ("service", name.as_str()),
-        ("user", bar.as_str()),
-    ]))
-    .unwrap();
-    assert_eq!(one.len(), 1);
-    let two = Entry::search(&HashMap::from([("service", name.as_str())])).unwrap();
-    assert_eq!(two.len(), 2);
-    e1.delete_credential().unwrap();
-    e2.delete_credential().unwrap();
+    let standard_entry = entry_new(&name, &name);
+    standard_entry.set_password("app group").unwrap();
+    let mods = HashMap::from([("access-group", "group.com.brotsky.test-harness")]);
+    let store: Arc<CredentialStore> = Store::new_with_configuration(&mods).unwrap();
+    let shared_entry = store.build(&name, &name, None).unwrap();
+    // the shared entry has a specific access group, so it will be created there
+    shared_entry.set_password("shared group").unwrap();
+    // the shared entry has a specific access group, so it will be found there
+    assert_eq!(shared_entry.get_password().unwrap(), "shared group");
+    // the shared entry has a specific access group, so it is its own wrapper
+    let wrapper = shared_entry.get_credential().unwrap();
+    assert_eq!(
+        shared_entry.as_any().downcast_ref::<Cred>().unwrap() as *const _,
+        wrapper.as_any().downcast_ref::<Cred>().unwrap() as *const _
+    );
+    // the standard entry, which has no access group, will be found before the shared entry
+    assert_eq!(standard_entry.get_password().unwrap(), "app group");
+    // but the standard entry is, in fact, ambiguous
+    let result = standard_entry.get_credential();
+    if let Err(Error::Ambiguous(entries)) = result {
+        assert_eq!(entries.len(), 2);
+        let cred1 = entries[0].as_any().downcast_ref::<Cred>().unwrap();
+        let cred2 = entries[1].as_any().downcast_ref::<Cred>().unwrap();
+        assert_ne!(
+            cred1.access_group.as_ref().unwrap(),
+            "group.com.brotsky.test-harness"
+        );
+        assert_eq!(
+            cred2.access_group.as_ref().unwrap(),
+            "group.com.brotsky.test-harness"
+        );
+        print!(" (App ID is: {}) ", cred1.access_group.as_ref().unwrap());
+        std::io::stdout().flush().unwrap();
+    } else {
+        panic!("Expected ambiguous error, get credential returned {result:?}");
+    }
+    test_round_trip("shared access group", &shared_entry, "test ascii password");
+    // make sure the standard entry is still there and is now unambiguous
+    assert_eq!(standard_entry.get_password().unwrap(), "app group");
+    standard_entry.get_credential().unwrap();
+    standard_entry.delete_credential().unwrap();
 }
 
-#[test]
-fn test_persistence() {
-    let store: Arc<CredentialStore> = Store::new().unwrap();
-    assert!(matches!(
-        store.persistence(),
-        CredentialPersistence::UntilDelete
-    ));
+#[distributed_slice(TESTS)]
+fn test_separate_sync_store() {
+    let name = generate_random_string();
+    let standard_entry = entry_new(&name, &name);
+    standard_entry.set_password("non-sync entry").unwrap();
+    let mods = HashMap::from([("cloud-sync", "true")]);
+    let store: Arc<CredentialStore> = Store::new_with_configuration(&mods).unwrap();
+    let sync_entry = store.build(&name, &name, None).unwrap();
+    sync_entry.set_password("sync entry").unwrap();
+    assert_eq!(sync_entry.get_password().unwrap(), "sync entry");
+    assert_eq!(standard_entry.get_password().unwrap(), "non-sync entry");
+    let standard_wrapper = standard_entry.get_credential().unwrap();
+    let sync_wrapper = sync_entry.get_credential().unwrap();
+    assert_eq!(
+        standard_wrapper
+            .as_any()
+            .downcast_ref::<Cred>()
+            .unwrap()
+            .access_group,
+        sync_wrapper
+            .as_any()
+            .downcast_ref::<Cred>()
+            .unwrap()
+            .access_group
+    );
+    standard_entry.delete_credential().unwrap();
+    sync_entry.get_credential().unwrap();
+    sync_entry.delete_credential().unwrap();
+}
+
+#[distributed_slice(TESTS)]
+fn test_search_with_ui() {
+    let base_count = Entry::search(&HashMap::new()).unwrap().len();
+    let name1 = generate_random_string();
+    let name2 = generate_random_string();
+    let entry1 = entry_new(&name1, &name1);
+    entry1.set_password("unprotected").unwrap();
+    let count = Entry::search(&HashMap::new()).unwrap().len();
+    assert_eq!(count, base_count + 1);
+    let mods = HashMap::from([("access-policy", "require-user-presence")]);
+    let entry2 = Entry::new_with_modifiers(&name2, &name2, &mods).unwrap();
+    entry2.set_password("protected").unwrap();
+    let count = Entry::search(&HashMap::new()).unwrap().len();
+    assert_eq!(count, base_count + 1);
+    let spec = HashMap::from([("show-authentication-ui", "true")]);
+    let count = Entry::search(&spec).unwrap().len();
+    assert_eq!(count, base_count + 2);
+    entry1.delete_credential().unwrap();
+    entry2.delete_credential().unwrap();
+    let count = Entry::search(&spec).unwrap().len();
+    assert_eq!(count, base_count);
 }

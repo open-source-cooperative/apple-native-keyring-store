@@ -22,11 +22,14 @@ jobs:
       - name: Clippy check
         run: cargo clippy --no-deps --all-targets --all-features -- -D warnings
 
-      - name: Build and Test
-        run: cargo test --lib --verbose
+      - name: Build and Test Keychain
+        run: cargo test --lib --verbose --features keychain
 
-      - name: Build examples
-        run: cargo build --examples --verbose
+      - name: Build instantiation example
+        run: cargo build --verbose --all-features --example instantiation
+        
+      - name: Build protected examples
+        run: cargo build --target aarch64-apple-ios --verbose --features protected --examples
 
   ci_msrv:
     runs-on: macos-latest
