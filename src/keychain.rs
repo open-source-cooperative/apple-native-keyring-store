@@ -2,11 +2,11 @@
 
 # macOS Keychain credential store
 
-All credentials on macOS are stored in secure stores called _keychains_. The OS
+macOS provides file-based secure stores called _keychains_. The OS
 automatically creates three of them (or four if removable media is being used),
 called _User_ (aka login), _Common_, _System_, and _Dynamic_.  The `keychain`
 configuration key specified when instantiating a [Store] determines
-which keychain that store uses for its credentials. By default,
+which keychain this store uses for its credentials. By default,
 the 'User' (aka login) keychain is used.
 
 For a given service/user pair, this module creates/searches for a generic
@@ -27,17 +27,15 @@ _account_ attribute (which is not displayed by _Keychain Access_).
 
 ## Attributes
 
-Credentials on macOS can have a large number of _key/value_ attributes, but this
-module ignores all of them. The only attribute on returned for credentials is a
-read-only, synthesized attribute `keychain` that gives the name of the keychain
-in which the credential is stored.
+Credentials on macOS have some fixed _key/value_ attributes, but this
+module ignores all of them.
 
 ## Search
 
 You can search the credentials in a given store (keychain) by `service`
 and `user`. The search is case-sensitive, and a wrapper around each
 matching credential is returned. Specifying neither `service` nor `user`
-returns all wrappers around all the credentials in the store.
+returns wrappers around all the credentials in the store.
 
  */
 use std::collections::HashMap;
@@ -46,7 +44,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use security_framework::base::Error;
 use security_framework::item;
-use security_framework::os::macos::item::ItemSearchOptionsExt;
 use security_framework::os::macos::keychain::{SecKeychain, SecPreferencesDomain};
 use security_framework::os::macos::passwords::find_generic_password;
 
@@ -84,18 +81,6 @@ impl CredentialApi for Cred {
             find_generic_password(Some(&[self.get_keychain()?]), &self.service, &self.account)
                 .map_err(decode_error)?;
         Ok(password_bytes.to_owned())
-    }
-
-    /// See the keychain-core API docs.
-    ///
-    /// A read-only attribute `keychain` is synthesized.
-    fn get_attributes(&self) -> Result<HashMap<String, String>> {
-        find_generic_password(Some(&[self.get_keychain()?]), &self.service, &self.account)
-            .map_err(decode_error)?;
-        Ok(HashMap::from([(
-            String::from("keychain"),
-            self.domain.to_string(),
-        )]))
     }
 
     /// See the keychain-core API docs.
@@ -206,7 +191,8 @@ impl Store {
         };
         Arc::new(Store {
             id: format!(
-                "Crate version {}, Instantiated at {}",
+                "Keychain {}, Crate version {}, Instantiated at {}",
+                keychain,
                 env!("CARGO_PKG_VERSION"),
                 elapsed.as_secs_f64()
             ),
@@ -369,11 +355,12 @@ fn get_keychain(domain: &MacKeychainDomain) -> Result<SecKeychain> {
 /// [this reference](https://opensource.apple.com/source/libsecurity_keychain/libsecurity_keychain-78/lib/SecBase.h.auto.html)
 pub fn decode_error(err: Error) -> ErrorCode {
     match err.code() {
+        -61 => ErrorCode::NoStorageAccess(Box::new(err)), // Write permissions error
         -25291 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecNotAvailable
         -25292 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecReadOnly
         -25294 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecNoSuchKeychain
         -25295 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecInvalidKeychain
-        -25300 => ErrorCode::NoEntry,                        // errSecItemNotFound
+        -25300 => ErrorCode::NoEntry,                     // errSecItemNotFound
         _ => ErrorCode::PlatformFailure(Box::new(err)),
     }
 }

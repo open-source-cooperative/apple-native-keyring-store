@@ -4,10 +4,17 @@ use apple_native_keyring_store::{keychain, protected};
 use keyring_core::{Entry, Result};
 
 fn main() {
-    report_error("login keychain sample", login_keychain_sample());
-    report_error("system keychain sample", system_keychain_sample());
-    report_error("protected keychain sample", protected_keychain_sample());
-    report_error("cloud keychain sample", cloud_keychain_sample());
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 || args[1] == "user" {
+        report_error("login keychain sample", login_keychain_sample());
+    }
+    if args.len() > 1 && args[1] == "system" {
+        report_error("system keychain sample", system_keychain_sample());
+    }
+    if args.len() > 1 && args[1] == "protected" {
+        report_error("protected keychain sample", protected_keychain_sample());
+        report_error("cloud keychain sample", cloud_keychain_sample());
+    }
 }
 
 fn login_keychain_sample() -> Result<()> {
@@ -21,6 +28,11 @@ fn login_keychain_sample() -> Result<()> {
 }
 
 fn system_keychain_sample() -> Result<()> {
+    if sudo::check() != sudo::RunningAs::Root {
+        println!("Using the system keychain requires root privileges.");
+        println!("You will be prompted for your password to escalate privileges.");
+    }
+    sudo::escalate_if_needed().expect("sudo failed");
     let config = HashMap::from([("keychain", "system")]);
     keyring_core::set_default_store(keychain::Store::new_with_configuration(&config)?);
     let e1 = Entry::new("test-system-service", "test-system-user")?;

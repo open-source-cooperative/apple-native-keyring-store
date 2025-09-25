@@ -1,48 +1,54 @@
 [package]
 authors = ["Daniel Brotsky <dev@brotsky.com>"]
-description = "Cross-platform library for managing passwords/secrets"
+description = "Apple-native credential store for keyring"
 homepage = "https://github.com/open-source-cooperative/keyring-rs/wiki/Keyring"
-keywords = ["password", "secret", "credential", "keychain", "cross-platform"]
+keywords = ["keyring", "credential", "protected-data", "keychain"]
 license = "MIT OR Apache-2.0"
 name = "apple-native-keyring-store"
 repository = "https://github.com/open-source-cooperative/apple-native-keyring-store.git"
-version = "0.1.0"
+version = "0.2.0"
 rust-version = "1.85"
 edition = "2024"
 exclude = [".github"]
 readme = "README.md"
 
 [features]
-# The sync-to-cloud features depend on not-yet-published-on-crates.io
-# features of the security-framework{,-sys} crates. If you are willing
-# to build this crate locally, then you can turn this feature on and
-# pick up the "git" path that has the changes merged. Otherwise, leave
-# this feature off and don't use the "cloud-sync" store configuration.
-sync = []
+keychain = ["security-framework"]
+protected = ["security-framework/OSX_10_15"]
 
 [[example]]
-name = "itemoptions"
-path = "examples/item_options.rs"
+name = "operations"
+path = "examples/item_operations.rs"
 crate-type = ["staticlib"]
+required-features = ["protected"]
+
+[[example]]
+name = "test"
+path = "examples/protected_test.rs"
+crate-type = ["staticlib"]
+required-features = ["protected"]
 
 [[example]]
 name = "instantiation"
+required-features = ["keychain", "protected"]
 
 [dependencies]
-keyring-core = { version = "0.6" }
+log = "0.4"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-security-framework = { version = "3", git = "https://github.com/brotskydotcom/rust-security-framework.git", branch = "composite" }
-security-framework-sys = { version = "2", git = "https://github.com/brotskydotcom/rust-security-framework.git", branch = "composite" }
+[dependencies.keyring-core]
+version = "0.7"
+# path = "../keyring-core"
 
-[target.'cfg(target_os = "ios")'.dependencies]
-security-framework = { version = "3", git = "https://github.com/brotskydotcom/rust-security-framework.git", branch = "composite" }
-security-framework-sys = { version = "2", git = "https://github.com/brotskydotcom/rust-security-framework.git", branch = "composite" }
+[dependencies.security-framework]
+version = "3.5"
+optional = true
+# path = "../rust-security-framework/security-framework"
 
 [dev-dependencies]
 fastrand = "2"
 env_logger = "0.11"
-log = "0.4"
+linkme = "0.3"
+sudo = "0.6.0"
 
 [package.metadata.docs.rs]
 default-target = "aarch64-apple-darwin"

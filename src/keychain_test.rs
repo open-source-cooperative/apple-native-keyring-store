@@ -188,26 +188,6 @@ fn test_duplicate_entries() {
 }
 
 #[test]
-fn test_get_update_attributes() {
-    let name = generate_random_string();
-    let entry = entry_new(&name, &name);
-    assert!(matches!(entry.get_attributes(), Err(Error::NoEntry)));
-    let invalid_map = HashMap::from([("foo", "bar")]);
-    assert!(matches!(
-        entry.update_attributes(&invalid_map),
-        Err(Error::NotSupportedByStore(_))
-    ));
-    entry.set_password("password for entry1").unwrap();
-    let attrs = entry.get_attributes().unwrap();
-    assert_eq!(attrs.len(), 1);
-    assert_eq!(attrs["keychain"], "User");
-    let attrs = entry.get_attributes().unwrap();
-    assert_eq!(attrs.len(), 1);
-    assert_eq!(attrs["keychain"], "User");
-    entry.delete_credential().unwrap();
-}
-
-#[test]
 fn test_get_credential_and_specifiers() {
     let name = generate_random_string();
     let entry1 = entry_new(&name, &name);

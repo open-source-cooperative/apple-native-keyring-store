@@ -4,9 +4,7 @@
 
 This is a static library meant to be linked into the
 [Rust-on-ios test harness](https://github.com/brotskydotcom/rust-on-ios/).
-It provides tests of the access control and cloud synchronization features,
-as well as some tests of the underlying platform APIs as exposed by the
-[rust-security-framework crate](https://crates.io/crates/rust-security-framework).
+It provides sample operations over default, presence-required, and cloud-synced items.
 
 */
 
@@ -16,23 +14,14 @@ use std::sync::{Arc, LazyLock};
 
 use apple_native_keyring_store::protected::Store;
 use keyring_core::{CredentialStore, Entry, Error, set_default_store};
-#[cfg(feature = "sync")]
-use security_framework::passwords::{
-    PasswordOptions, delete_generic_password_options, generic_password,
-    set_generic_password_options,
-};
 
-static SERVICE: &str = "protected-test-item-service";
-static USER: &str = "protected-test-item-account";
+static SERVICE: &str = "item-service";
+static USER: &str = "item-account";
 
 static LOCAL_STORE: LazyLock<Arc<CredentialStore>> = LazyLock::new(|| Store::new().unwrap());
 
 static SYNC_STORE: LazyLock<Arc<CredentialStore>> = LazyLock::new(|| {
-    let options = if cfg!(feature = "sync") {
-        HashMap::from([("cloud-sync", "true")])
-    } else {
-        HashMap::new()
-    };
+    let options = HashMap::from([("cloud-sync", "true")]);
     Store::new_with_configuration(&options).unwrap()
 });
 
@@ -46,6 +35,7 @@ static OP_STRINGS: &str = "
     set sync
     set sync insensitive
     get default
+    get default attributes
     get sync
     delete default
     delete sync
@@ -73,6 +63,7 @@ extern "C" fn test(op: i32) {
         set_sync,
         set_sync_insensitive,
         get_default,
+        get_default_credential,
         get_sync,
         delete_default,
         delete_sync,
@@ -212,7 +203,17 @@ fn get_default() {
     match password {
         Ok(password) => println!("Got password: {password}"),
         Err(Error::NoEntry) => println!("No entry found"),
-        Err(err) => panic!("Unexpected error: {err:?}"),
+        Err(err) => println!("Unexpected error: {err:?}"),
+    }
+}
+
+fn get_default_credential() {
+    set_default_store((*LOCAL_STORE).clone());
+    let entry = Entry::new(SERVICE, USER).unwrap();
+    match entry.get_credential() {
+        Ok(credential) => println!("Got credential: {credential:?}"),
+        Err(Error::NoEntry) => println!("No entry found"),
+        Err(err) => println!("Unexpected error: {err:?}"),
     }
 }
 
@@ -251,7 +252,10 @@ fn search_default() {
     set_default_store((*LOCAL_STORE).clone());
     match Entry::search(&HashMap::new()) {
         Ok(entries) => {
-            println!("Found {} entries", entries.len());
+            println!("Found {} entries:", entries.len());
+            for (i, wrapper) in entries.iter().enumerate() {
+                println!("    {i}: {wrapper:?}");
+            }
         }
         Err(err) => println!("Unexpected error: {err:?}"),
     }
@@ -262,40 +266,10 @@ fn search_sync() {
     match Entry::search(&HashMap::new()) {
         Ok(entries) => {
             println!("Found {} entries", entries.len());
+            for (i, wrapper) in entries.iter().enumerate() {
+                println!("    {i}: {wrapper:?}");
+            }
         }
         Err(err) => println!("Unexpected error: {err:?}"),
-    }
-}
-
-#[allow(dead_code)]
-#[cfg(feature = "sync")]
-fn set_either() {
-    let mut options = PasswordOptions::new_generic_password(SERVICE, USER);
-    options.set_access_synchronized(None);
-    match set_generic_password_options(b"set either password", options) {
-        Ok(_) => println!("Set either password"),
-        Err(err) => println!("Set either got error: {err:?}"),
-    }
-}
-
-#[allow(dead_code)]
-#[cfg(feature = "sync")]
-fn get_either() {
-    let mut options = PasswordOptions::new_generic_password(SERVICE, USER);
-    options.set_access_synchronized(None);
-    match generic_password(options) {
-        Ok(pw) => println!("Got password: {}", String::from_utf8_lossy(pw.as_slice())),
-        Err(err) => println!("Get either got error: {err:?}"),
-    }
-}
-
-#[allow(dead_code)]
-#[cfg(feature = "sync")]
-fn delete_either() {
-    let mut options = PasswordOptions::new_generic_password(SERVICE, USER);
-    options.set_access_synchronized(None);
-    match delete_generic_password_options(options) {
-        Ok(_) => println!("Deleted either password"),
-        Err(err) => println!("Delete either got error: {err:?}"),
     }
 }
