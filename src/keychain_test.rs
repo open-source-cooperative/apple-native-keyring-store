@@ -340,6 +340,7 @@ fn test_simultaneous_multiple_create_delete_single_thread() {
 }
 
 #[test]
+#[ignore] // not safe on underpowered machines while other tests are running
 fn test_search() {
     SET_STORE.call_once(usually_goes_in_main);
     let all = Entry::search(&HashMap::new()).unwrap();

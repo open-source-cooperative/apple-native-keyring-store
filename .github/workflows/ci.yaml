@@ -24,7 +24,9 @@ jobs:
         run: cargo clippy --no-deps --all-targets --all-features -- -D warnings
 
       - name: Build and Test Keychain
-        run: cargo test --lib --verbose --features keychain
+        run: |
+          cargo test --lib --verbose --features keychain
+          cargo test --lib --verbose --features keychain -- --ignored
 
       - name: Build instantiation example
         run: cargo build --verbose --all-features --example instantiation
