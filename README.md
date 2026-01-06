@@ -4,7 +4,7 @@
 
 This is a [keyring credential store provider](https://github.com/open-source-cooperative/keyring-rs/wiki/Keyring) that stores credentials in the native macOS and iOS secure stores. It’s compatible with [keyring-core](https://crates.io/crates/keyring-core) v0.7 and later.
 
-If you are writing clients app that are _not_ code-signed by a provisioning profile (e.g., command-line apps), then you should use the `keychain` module of this store, which accesses the macOS keychain. (This is the module which is most compatible with [keyring v3](https://crates.io/crates/keyring/3.6.3) and earlier.) Specify the `keychain` feature when you build.
+If you are writing client apps that are _not_ code-signed by a provisioning profile (e.g., command-line apps), then you should use the `keychain` module of this store, which accesses the macOS keychain. (This is the module which is most compatible with [keyring v3](https://crates.io/crates/keyring/3.6.3) and earlier.) Specify the `keychain` feature when you build.
 
 If you are writing client apps that _are_ code-signed by a provisioning profile, then you should use the `protected` module of this store, which accesses the Apple Protected Data store. This module supports synchronizing credentials across devices via iCloud. It also supports requiring biometric authentication for credential access (although such credentials can be not be sync’d across devices). Specify the `protected` feature when you build.
 
