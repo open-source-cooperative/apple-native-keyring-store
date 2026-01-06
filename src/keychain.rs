@@ -158,10 +158,19 @@ impl Cred {
 }
 
 /// The store for Mac keychain credentials
-#[derive(Debug)]
 pub struct Store {
     id: String,
     keychain: MacKeychainDomain,
+}
+
+impl std::fmt::Debug for Store {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Store")
+            .field("vendor", &self.vendor())
+            .field("id", &self.id())
+            .field("domain", &self.keychain)
+            .finish()
+    }
 }
 
 impl Store {
@@ -191,8 +200,7 @@ impl Store {
         };
         Arc::new(Store {
             id: format!(
-                "Keychain {}, Crate version {}, Instantiated at {}",
-                keychain,
+                "Keychain Storage, Crate version {}, Instantiated at {}",
                 env!("CARGO_PKG_VERSION"),
                 elapsed.as_secs_f64()
             ),

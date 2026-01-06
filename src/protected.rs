@@ -349,11 +349,21 @@ impl CredentialApi for Cred {
 }
 
 /// The builder for iOS keychain credentials
-#[derive(Debug)]
 pub struct Store {
     id: String,
     access_group: Option<String>,
     cloud_synchronize: bool,
+}
+
+impl std::fmt::Debug for Store {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Store")
+            .field("vendor", &self.vendor())
+            .field("id", &self.id())
+            .field("access_group", &self.access_group)
+            .field("cloud_synchronize", &self.cloud_synchronize)
+            .finish()
+    }
 }
 
 impl Store {
@@ -393,7 +403,7 @@ impl Store {
             now.duration_since(UNIX_EPOCH).unwrap()
         };
         let id = format!(
-            "Crate version {}, Instantiated at {}",
+            "Protected Data Storage, Crate version {}, Instantiated at {}",
             env!("CARGO_PKG_VERSION"),
             elapsed.as_secs_f64()
         );
