@@ -13,7 +13,7 @@ exclude = [".github"]
 readme = "README.md"
 
 [features]
-keychain = ["dep:security-framework"]
+keychain = ["security-framework"]
 protected = ["security-framework/OSX_10_15"]
 
 [[example]]
@@ -30,7 +30,6 @@ required-features = ["protected"]
 
 [[example]]
 name = "instantiation"
-required-features = ["keychain", "protected"]
 
 [dependencies]
 log = "0.4"
