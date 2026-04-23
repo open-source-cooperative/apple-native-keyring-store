@@ -6,7 +6,7 @@ keywords = ["keyring", "credential", "protected-data", "keychain"]
 license = "MIT OR Apache-2.0"
 name = "apple-native-keyring-store"
 repository = "https://github.com/open-source-cooperative/apple-native-keyring-store.git"
-version = "0.2.3"
+version = "1.0.0"
 rust-version = "1.85"
 edition = "2024"
 exclude = [".github"]
@@ -40,11 +40,11 @@ name = "instantiation"
 log = "0.4"
 
 [dependencies.keyring-core]
-version = "0.7"
+version = "1"
 # path = "../keyring-core"
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
-security-framework = { version = "3.5", optional = true }
+security-framework = { version = "3.7", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6", optional = true }
@@ -56,9 +56,8 @@ objc2-local-authentication = { version = "0.3", optional = true, features = ["LA
 fastrand = "2"
 env_logger = "0.11"
 linkme = "0.3"
-sudo = "0.6.0"
+sudo = "0.6"
 
 [package.metadata.docs.rs]
-all-features = true
 targets = ["aarch64-apple-darwin", "aarch64-apple-ios"]
-default-target = "aarch64-apple-darwin"
+all-features = true
