@@ -18,6 +18,21 @@ attributes, there is no chance of ambiguity.
 Because of a quirk in the Mac keychain services API, neither the _account_
 nor the _service_ may be the empty string.
 
+## Touch ID (biometric feature)
+
+With the `biometric` feature enabled, you can require Touch ID authentication
+before every keychain operation. This mirrors the approach used by
+[keychain-fingerprint](https://github.com/dss99911/keychain-fingerprint):
+authenticate with biometrics first, then proceed with regular keychain access.
+
+Enable it at the store level:
+```ignore
+let config = HashMap::from([("touch-id", "true")]);
+let store = Store::new_with_configuration(&config)?;
+```
+
+Or override per-entry via the `touch-id` modifier in [`Store::build`].
+
 In the _Keychain Access_ UI on Mac, credentials created by this module show up
 in the _Passwords_ view (with their _where_ and _name_ fields both showing
 their _service_ attribute). What the Keychain Access lists under _Note_ entries
@@ -54,6 +69,10 @@ use keyring_core::{
     error::{Error as ErrorCode, Result},
 };
 
+/// Default reason shown in the Touch ID dialog when `require_touch_id` is enabled.
+#[cfg(feature = "biometric")]
+const DEFAULT_TOUCH_ID_REASON: &str = "authenticate to access keychain credential";
+
 /// The representation of a generic Keychain credential.
 ///
 /// The actual credentials can have lots of attributes
@@ -64,11 +83,14 @@ pub struct Cred {
     pub domain: MacKeychainDomain,
     pub service: String,
     pub account: String,
+    #[cfg(feature = "biometric")]
+    pub require_touch_id: bool,
 }
 
 impl CredentialApi for Cred {
     /// See the keychain-core API docs.
     fn set_secret(&self, secret: &[u8]) -> Result<()> {
+        self.authenticate_if_required()?;
         self.get_keychain()?
             .set_generic_password(&self.service, &self.account, secret)
             .map_err(decode_error)?;
@@ -77,6 +99,7 @@ impl CredentialApi for Cred {
 
     /// See the keychain-core API docs.
     fn get_secret(&self) -> Result<Vec<u8>> {
+        self.authenticate_if_required()?;
         let (password_bytes, _) =
             find_generic_password(Some(&[self.get_keychain()?]), &self.service, &self.account)
                 .map_err(decode_error)?;
@@ -85,6 +108,7 @@ impl CredentialApi for Cred {
 
     /// See the keychain-core API docs.
     fn delete_credential(&self) -> Result<()> {
+        self.authenticate_if_required()?;
         let (_, item) =
             find_generic_password(Some(&[self.get_keychain()?]), &self.service, &self.account)
                 .map_err(decode_error)?;
@@ -97,6 +121,7 @@ impl CredentialApi for Cred {
     /// Since every specifier is also a wrapper, this is just a check
     /// to see whether the underlying credential exists.
     fn get_credential(&self) -> Result<Option<Arc<Credential>>> {
+        self.authenticate_if_required()?;
         find_generic_password(Some(&[self.get_keychain()?]), &self.service, &self.account)
             .map_err(decode_error)?;
         Ok(None)
@@ -131,7 +156,18 @@ impl Cred {
     /// This will fail if the service or user strings are empty,
     /// because empty attribute values act as wildcards in the
     /// Keychain Services API.
-    pub fn build(keychain: MacKeychainDomain, service: &str, user: &str) -> Result<Entry> {
+    ///
+    /// When `require_touch_id` is true (requires the `biometric` feature),
+    /// every operation on this credential will first prompt for Touch ID
+    /// authentication, similar to how
+    /// [keychain-fingerprint](https://github.com/dss99911/keychain-fingerprint)
+    /// gates keychain access.
+    pub fn build(
+        keychain: MacKeychainDomain,
+        service: &str,
+        user: &str,
+        #[cfg(feature = "biometric")] require_touch_id: bool,
+    ) -> Result<Entry> {
         if service.is_empty() {
             return Err(ErrorCode::Invalid(
                 "service".to_string(),
@@ -148,6 +184,8 @@ impl Cred {
             domain: keychain,
             service: service.to_string(),
             account: user.to_string(),
+            #[cfg(feature = "biometric")]
+            require_touch_id,
         };
         Ok(Entry::new_with_credential(Arc::new(cred)))
     }
@@ -155,43 +193,87 @@ impl Cred {
     fn get_keychain(&self) -> Result<SecKeychain> {
         get_keychain(&self.domain)
     }
+
+    #[cfg(feature = "biometric")]
+    fn authenticate_if_required(&self) -> Result<()> {
+        if self.require_touch_id {
+            crate::biometric::authenticate(DEFAULT_TOUCH_ID_REASON)
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(not(feature = "biometric"))]
+    fn authenticate_if_required(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// The store for Mac keychain credentials
 pub struct Store {
     id: String,
     keychain: MacKeychainDomain,
+    #[cfg(feature = "biometric")]
+    require_touch_id: bool,
 }
 
 impl std::fmt::Debug for Store {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Store")
-            .field("vendor", &self.vendor())
+        let mut s = f.debug_struct("Store");
+        s.field("vendor", &self.vendor())
             .field("id", &self.id())
-            .field("domain", &self.keychain)
-            .finish()
+            .field("domain", &self.keychain);
+        #[cfg(feature = "biometric")]
+        s.field("require_touch_id", &self.require_touch_id);
+        s.finish()
     }
 }
 
 impl Store {
     /// Create a default store, which uses the User (aka login) keychain.
     pub fn new() -> Result<Arc<Self>> {
-        Ok(Self::new_internal(MacKeychainDomain::User))
+        Ok(Self::new_internal(
+            MacKeychainDomain::User,
+            #[cfg(feature = "biometric")]
+            false,
+        ))
     }
 
     /// Create a store configured to use a specific keychain.
     ///
     /// The keychain used can be overridden by a modifier on a specific entry.
+    ///
+    /// With the `biometric` feature enabled, you can pass `touch-id` set to
+    /// `"true"` to require Touch ID authentication before every keychain
+    /// operation on credentials from this store.
     pub fn new_with_configuration(configuration: &HashMap<&str, &str>) -> Result<Arc<Self>> {
-        let config = parse_attributes(&["keychain"], Some(configuration))?;
+        let config = parse_attributes(
+            &[
+                "keychain",
+                #[cfg(feature = "biometric")]
+                "*touch-id",
+            ],
+            Some(configuration),
+        )?;
         let mut keychain = MacKeychainDomain::User;
         if let Some(option) = config.get("keychain") {
             keychain = option.parse()?;
         }
-        Ok(Self::new_internal(keychain))
+        #[cfg(feature = "biometric")]
+        let require_touch_id = config
+            .get("touch-id")
+            .is_some_and(|s| s.eq("true"));
+        Ok(Self::new_internal(
+            keychain,
+            #[cfg(feature = "biometric")]
+            require_touch_id,
+        ))
     }
 
-    fn new_internal(keychain: MacKeychainDomain) -> Arc<Self> {
+    fn new_internal(
+        keychain: MacKeychainDomain,
+        #[cfg(feature = "biometric")] require_touch_id: bool,
+    ) -> Arc<Self> {
         let now = SystemTime::now();
         let elapsed = if now.lt(&UNIX_EPOCH) {
             UNIX_EPOCH.duration_since(now).unwrap()
@@ -205,6 +287,8 @@ impl Store {
                 elapsed.as_secs_f64()
             ),
             keychain,
+            #[cfg(feature = "biometric")]
+            require_touch_id,
         })
     }
 }
@@ -222,22 +306,41 @@ impl CredentialStoreApi for Store {
 
     /// See the keychain-core API docs.
     ///
-    /// The only option you can specify is `keychain`, and the value
-    /// must name a keychain (User, System, Common, or Dynamic)
-    /// you want to use to hold the credential when it's created.
-    /// The default is the User (aka login) keychain.
+    /// The options you can specify are:
+    /// - `keychain`: the keychain to use (User, System, Common, or Dynamic).
+    ///   The default is the User (aka login) keychain.
+    /// - `touch-id` (requires `biometric` feature): `"true"` or `"false"` to
+    ///   override the store-level Touch ID setting for this entry.
     fn build(
         &self,
         service: &str,
         user: &str,
         modifiers: Option<&HashMap<&str, &str>>,
     ) -> Result<Entry> {
-        let mods = parse_attributes(&["keychain"], modifiers)?;
+        let mods = parse_attributes(
+            &[
+                "keychain",
+                #[cfg(feature = "biometric")]
+                "*touch-id",
+            ],
+            modifiers,
+        )?;
         let mut keychain = self.keychain.clone();
         if let Some(option) = mods.get("keychain") {
             keychain = option.parse()?;
         }
-        Cred::build(keychain, service, user)
+        #[cfg(feature = "biometric")]
+        let require_touch_id = mods
+            .get("touch-id")
+            .map(|s| s.eq("true"))
+            .unwrap_or(self.require_touch_id);
+        Cred::build(
+            keychain,
+            service,
+            user,
+            #[cfg(feature = "biometric")]
+            require_touch_id,
+        )
     }
 
     /// See the keychain-core API docs.
@@ -248,7 +351,14 @@ impl CredentialStoreApi for Store {
     /// for each matching credential is returned. If no `service` or `user` is
     /// specified, all credentials in the store's configured keychain are
     /// returned.
+    ///
+    /// When Touch ID is enabled on this store, authentication is required
+    /// before the search is performed.
     fn search(&self, spec: &HashMap<&str, &str>) -> Result<Vec<Entry>> {
+        #[cfg(feature = "biometric")]
+        if self.require_touch_id {
+            crate::biometric::authenticate(DEFAULT_TOUCH_ID_REASON)?;
+        }
         let spec = parse_attributes(&["service", "user"], Some(spec))?;
         let keychains = [get_keychain(&self.keychain)?];
         let mut options = item::ItemSearchOptions::new();
@@ -277,6 +387,8 @@ impl CredentialStoreApi for Store {
                             domain: self.keychain.clone(),
                             service: service.to_string(),
                             account: account.to_string(),
+                            #[cfg(feature = "biometric")]
+                            require_touch_id: self.require_touch_id,
                         };
                         result.push(Entry::new_with_credential(Arc::new(cred)))
                     }

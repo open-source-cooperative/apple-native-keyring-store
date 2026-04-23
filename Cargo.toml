@@ -15,6 +15,7 @@ readme = "README.md"
 [features]
 keychain = ["security-framework"]
 protected = ["security-framework/OSX_10_15"]
+biometric = ["objc2", "block2", "objc2-foundation", "objc2-local-authentication"]
 
 [[example]]
 name = "operations"
@@ -29,6 +30,10 @@ crate-type = ["staticlib"]
 required-features = ["protected"]
 
 [[example]]
+name = "biometric"
+required-features = ["keychain", "biometric"]
+
+[[example]]
 name = "instantiation"
 
 [dependencies]
@@ -38,10 +43,14 @@ log = "0.4"
 version = "1"
 # path = "../keyring-core"
 
-[dependencies.security-framework]
-version = "3.7"
-optional = true
-# path = "../rust-security-framework/security-framework"
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+security-framework = { version = "3.7", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", optional = true }
+block2 = { version = "0.6", optional = true }
+objc2-foundation = { version = "0.3", optional = true, features = ["NSString", "NSError"] }
+objc2-local-authentication = { version = "0.3", optional = true, features = ["LAContext", "LAError", "block2"] }
 
 [dev-dependencies]
 fastrand = "2"

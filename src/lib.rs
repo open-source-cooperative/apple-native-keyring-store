@@ -51,3 +51,6 @@ compile_error!("The `protected` feature is required on iOS");
 
 #[cfg(feature = "protected")]
 pub mod protected;
+
+#[cfg(all(target_os = "macos", feature = "biometric"))]
+pub mod biometric;
