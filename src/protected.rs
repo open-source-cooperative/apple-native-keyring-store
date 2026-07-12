@@ -568,11 +568,11 @@ fn determine_access_policy(mods: &HashMap<String, String>) -> Result<AccessPolic
         match policy.to_ascii_lowercase().as_str() {
             "after-first-unlock" | "afterfirstunlock" => Ok(AccessPolicy::AfterFirstUnlock),
             "after-first-unlock-this-device-only" | "afterfirstunlockthisdeviceonly" => {
-                Ok(AccessPolicy::AfterFirstUnlock)
+                Ok(AccessPolicy::AfterFirstUnlockThisDeviceOnly)
             }
             "when-unlocked" | "whenunlocked" | "default" => Ok(AccessPolicy::WhenUnlocked),
             "when-unlocked-this-device-only" | "whenunlockedthisdeviceonly" => {
-                Ok(AccessPolicy::WhenUnlocked)
+                Ok(AccessPolicy::WhenUnlockedThisDeviceOnly)
             }
             "require-user-presence" | "requireuserpresence" => {
                 Ok(AccessPolicy::RequireUserPresence)
