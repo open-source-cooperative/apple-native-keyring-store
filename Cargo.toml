@@ -39,7 +39,7 @@ version = "1"
 # path = "../keyring-core"
 
 [dependencies.security-framework]
-version = "3.7"
+version = "3.8"
 optional = true
 # path = "../rust-security-framework/security-framework"
 

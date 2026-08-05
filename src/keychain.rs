@@ -88,7 +88,7 @@ impl CredentialApi for Cred {
         let (_, item) =
             find_generic_password(Some(&[self.get_keychain()?]), &self.service, &self.account)
                 .map_err(decode_error)?;
-        item.delete();
+        item.try_delete().map_err(decode_error)?;
         Ok(())
     }
 
