@@ -85,11 +85,14 @@ impl CredentialApi for Cred {
 
     /// See the keychain-core API docs.
     fn delete_credential(&self) -> Result<()> {
-        let (_, item) =
-            find_generic_password(Some(&[self.get_keychain()?]), &self.service, &self.account)
-                .map_err(decode_error)?;
-        item.delete();
-        Ok(())
+        let keychains = [self.get_keychain()?];
+        let mut options = item::ItemSearchOptions::new();
+        options
+            .keychains(&keychains)
+            .class(item::ItemClass::generic_password())
+            .service(&self.service)
+            .account(&self.account);
+        options.delete().map_err(decode_error)
     }
 
     /// See the keychain-core API docs.
