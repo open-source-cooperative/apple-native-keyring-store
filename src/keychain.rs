@@ -85,11 +85,14 @@ impl CredentialApi for Cred {
 
     /// See the keychain-core API docs.
     fn delete_credential(&self) -> Result<()> {
-        let (_, item) =
-            find_generic_password(Some(&[self.get_keychain()?]), &self.service, &self.account)
-                .map_err(decode_error)?;
-        item.delete();
-        Ok(())
+        let keychains = [self.get_keychain()?];
+        let mut options = item::ItemSearchOptions::new();
+        options
+            .keychains(&keychains)
+            .class(item::ItemClass::generic_password())
+            .service(&self.service)
+            .account(&self.account);
+        options.delete().map_err(decode_error)
     }
 
     /// See the keychain-core API docs.
@@ -364,6 +367,7 @@ fn get_keychain(domain: &MacKeychainDomain) -> Result<SecKeychain> {
 pub fn decode_error(err: Error) -> ErrorCode {
     match err.code() {
         -61 => ErrorCode::NoStorageAccess(Box::new(err)), // Write permissions error
+        -25244 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecInvalidOwnerEdit
         -25291 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecNotAvailable
         -25292 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecReadOnly
         -25294 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecNoSuchKeychain
