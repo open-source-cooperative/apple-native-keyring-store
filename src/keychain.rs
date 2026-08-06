@@ -367,6 +367,7 @@ fn get_keychain(domain: &MacKeychainDomain) -> Result<SecKeychain> {
 pub fn decode_error(err: Error) -> ErrorCode {
     match err.code() {
         -61 => ErrorCode::NoStorageAccess(Box::new(err)), // Write permissions error
+        -25244 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecInvalidOwnerEdit
         -25291 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecNotAvailable
         -25292 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecReadOnly
         -25294 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecNoSuchKeychain
