@@ -1,0 +1,52 @@
+name: iOS simulator
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  protected-store:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: stable
+          target: aarch64-apple-ios-sim
+      - name: Build tests
+        id: build
+        env:
+          RUSTFLAGS: -D warnings -C link-arg=-Wl,-sectcreate,__TEXT,__entitlements,${{ github.workspace }}/tests/ios-simulator.entitlements
+        run: |
+          bin=$(cargo test --lib --no-run --target aarch64-apple-ios-sim --features protected --message-format=json \
+            | jq -r 'select(.profile.test == true and .executable != null) | .executable')
+          [ -n "$bin" ] && [ "$(printf '%s\n' "$bin" | wc -l)" -eq 1 ]
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
+      - name: Boot simulator
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available -j \
+            | jq -r '[.devices | to_entries[] | select(.key | contains("SimRuntime.iOS")) | .value[] | select(.name | startswith("iPhone"))][0].udid // empty')
+          [ -n "$udid" ]
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid"
+      - name: Run tests
+        timeout-minutes: 5
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+          BIN: ${{ steps.build.outputs.bin }}
+        run: xcrun simctl spawn "$UDID" "$BIN"
+      - name: Shut down simulator
+        if: always() && steps.sim.outputs.udid != ''
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: xcrun simctl shutdown "$UDID"
