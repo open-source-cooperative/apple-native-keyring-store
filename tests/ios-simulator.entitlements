@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Test-only entitlements for the iOS simulator, tied to no Apple team. -->
+<plist version="1.0">
+<dict>
+	<key>application-identifier</key>
+	<string>TESTONLY00.org.example.apple-native-keyring-store</string>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>TESTONLY00.org.example.apple-native-keyring-store</string>
+	</array>
+</dict>
+</plist>

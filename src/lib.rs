@@ -51,3 +51,7 @@ compile_error!("The `protected` feature is required on iOS");
 
 #[cfg(feature = "protected")]
 pub mod protected;
+
+#[cfg(all(target_os = "ios", feature = "protected"))]
+#[cfg(test)]
+mod protected_test;
