@@ -55,6 +55,9 @@ protection. This module uses a default access policy of "accessible when device
 is unlocked", but entry modifiers can be used to change this. See the docs for
 [build](Store::build) for details.
 
+A store created with `shared-authentication` asks for user presence once for
+all its entries, until [reset_authentication](Store::reset_authentication).
+
 ## Attributes
 
 This store exposes no attributes.
@@ -78,11 +81,12 @@ them not to be skipped, but this is not recommended.
  */
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use log::error;
 use security_framework::access_control::{ProtectionMode, SecAccessControl};
+use security_framework::authentication_context::AuthenticationContext;
 use security_framework::base::Error;
 use security_framework::item;
 use security_framework::passwords::{
@@ -137,19 +141,56 @@ impl From<&AccessPolicy> for ProtectionMode {
     }
 }
 
+#[derive(Debug, Default)]
+struct SharedAuthentication(Mutex<AuthenticationContext>);
+
+impl SharedAuthentication {
+    fn current(&self) -> AuthenticationContext {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn reset(&self) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = AuthenticationContext::new();
+    }
+}
+
 /// The representation of a generic password credential.
 ///
 /// If there is no access group, the credential will be created in a
 /// default group as chosen by the OS per
 /// [these guidelines](https://developer.apple.com/documentation/security/ksecattraccessgroup).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Cred {
     pub service: String,
     pub account: String,
     pub access_policy: AccessPolicy,
     pub access_group: Option<String>,
     pub cloud_synchronize: bool,
+    authentication: Option<Arc<SharedAuthentication>>,
 }
+
+impl PartialEq for Cred {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            service,
+            account,
+            access_policy,
+            access_group,
+            cloud_synchronize,
+            authentication: _,
+        } = self;
+        *service == other.service
+            && *account == other.account
+            && *access_policy == other.access_policy
+            && *access_group == other.access_group
+            && *cloud_synchronize == other.cloud_synchronize
+    }
+}
+
+impl Eq for Cred {}
 
 impl Cred {
     /// Create an entry representing a protected generic password.
@@ -163,6 +204,24 @@ impl Cred {
         access_policy: AccessPolicy,
         access_group: Option<String>,
         cloud_synchronize: bool,
+    ) -> Result<Entry> {
+        Self::build_entry(
+            service,
+            user,
+            access_policy,
+            access_group,
+            cloud_synchronize,
+            None,
+        )
+    }
+
+    fn build_entry(
+        service: &str,
+        user: &str,
+        access_policy: AccessPolicy,
+        access_group: Option<String>,
+        cloud_synchronize: bool,
+        authentication: Option<Arc<SharedAuthentication>>,
     ) -> Result<Entry> {
         if service.is_empty() {
             return Err(ErrorCode::Invalid(
@@ -182,11 +241,16 @@ impl Cred {
             access_policy,
             access_group,
             cloud_synchronize,
+            authentication,
         };
         Ok(Entry::new_with_credential(Arc::new(cred)))
     }
 
-    fn build_from_search_result(result: &item::SearchResult, cloud_sync: bool) -> Result<Entry> {
+    fn build_from_search_result(
+        result: &item::SearchResult,
+        cloud_sync: bool,
+        authentication: Option<&Arc<SharedAuthentication>>,
+    ) -> Result<Entry> {
         if let Some(attrs) = result.simplify_dict() {
             let service = attrs.get("svce").ok_or_else(|| {
                 ErrorCode::Invalid("search result".to_string(), "has no service".to_string())
@@ -201,6 +265,7 @@ impl Cred {
                 access_group: group,
                 access_policy: Default::default(),
                 cloud_synchronize: cloud_sync,
+                authentication: authentication.cloned(),
             })))
         } else {
             // should never happen
@@ -226,11 +291,8 @@ impl Cred {
         }
         cred
     }
-}
 
-impl CredentialApi for Cred {
-    /// See the keychain-core API docs.
-    fn set_secret(&self, secret: &[u8]) -> Result<()> {
+    fn password_options(&self) -> PasswordOptions {
         let mut options = PasswordOptions::new_generic_password(&self.service, &self.account);
         options.use_protected_keychain();
         if let Some(access_group) = &self.access_group {
@@ -238,7 +300,19 @@ impl CredentialApi for Cred {
         }
         if self.cloud_synchronize {
             options.set_access_synchronized(Some(true));
-        } else {
+        }
+        if let Some(authentication) = &self.authentication {
+            options.set_authentication_context(&authentication.current());
+        }
+        options
+    }
+}
+
+impl CredentialApi for Cred {
+    /// See the keychain-core API docs.
+    fn set_secret(&self, secret: &[u8]) -> Result<()> {
+        let mut options = self.password_options();
+        if !self.cloud_synchronize {
             match &self.access_policy {
                 AccessPolicy::RequireUserPresence => {
                     let access_control = SecAccessControl::create_with_protection(
@@ -265,28 +339,12 @@ impl CredentialApi for Cred {
 
     /// See the keychain-core API docs.
     fn get_secret(&self) -> Result<Vec<u8>> {
-        let mut options = PasswordOptions::new_generic_password(&self.service, &self.account);
-        options.use_protected_keychain();
-        if let Some(access_group) = &self.access_group {
-            options.set_access_group(access_group);
-        }
-        if self.cloud_synchronize {
-            options.set_access_synchronized(Some(true));
-        }
-        generic_password(options).map_err(decode_error)
+        generic_password(self.password_options()).map_err(decode_error)
     }
 
     /// See the keychain-core API docs.
     fn delete_credential(&self) -> Result<()> {
-        let mut options = PasswordOptions::new_generic_password(&self.service, &self.account);
-        options.use_protected_keychain();
-        if let Some(access_group) = &self.access_group {
-            options.set_access_group(access_group);
-        }
-        if self.cloud_synchronize {
-            options.set_access_synchronized(Some(true));
-        }
-        delete_generic_password_options(options).map_err(decode_error)?;
+        delete_generic_password_options(self.password_options()).map_err(decode_error)?;
         Ok(())
     }
 
@@ -299,14 +357,8 @@ impl CredentialApi for Cred {
     ///    check for ambiguity and, if none, return a wrapper that has
     ///    the access group attached.
     fn get_credential(&self) -> Result<Option<Arc<Credential>>> {
-        if let Some(access_group) = &self.access_group {
-            let mut options = PasswordOptions::new_generic_password(&self.service, &self.account);
-            options.use_protected_keychain();
-            options.set_access_group(access_group);
-            if self.cloud_synchronize {
-                options.set_access_synchronized(Some(true));
-            }
-            generic_password(options).map_err(decode_error)?;
+        if self.access_group.is_some() {
+            generic_password(self.password_options()).map_err(decode_error)?;
             Ok(None)
         } else {
             let results = search_items(
@@ -315,6 +367,7 @@ impl CredentialApi for Cred {
                 self.access_group.as_deref(),
                 self.cloud_synchronize,
                 false,
+                self.authentication.as_deref(),
             )?;
             match results.len() {
                 0 => Err(ErrorCode::NoEntry),
@@ -353,6 +406,7 @@ pub struct Store {
     id: String,
     access_group: Option<String>,
     cloud_synchronize: bool,
+    authentication: Option<Arc<SharedAuthentication>>,
 }
 
 impl std::fmt::Debug for Store {
@@ -362,6 +416,7 @@ impl std::fmt::Debug for Store {
             .field("id", &self.id())
             .field("access_group", &self.access_group)
             .field("cloud_synchronize", &self.cloud_synchronize)
+            .field("shared_authentication", &self.authentication.is_some())
             .finish()
     }
 }
@@ -369,19 +424,25 @@ impl std::fmt::Debug for Store {
 impl Store {
     /// Create a default store, which does *not* synchronize with the cloud.
     pub fn new() -> Result<Arc<Self>> {
-        Ok(Self::new_internal(None, false))
+        Ok(Self::new_internal(None, false, false))
     }
 
     /// Create a configured store.
     ///
-    /// There are two allowed configuration keys:
+    /// There are three allowed configuration keys:
     /// - `cloud-sync` (`true` or `false`), default false. Specifying this key as true
     ///   will sync all items in the store with iCloud.
     /// - `access-group`. If non-empty, this store will store all its items in the
     ///   specified access group. If empty or not specified, as in the default configuration,
     ///   all items will be stored in the app's default access group.
+    /// - `shared-authentication` (`true` or `false`), default false. If true, one user-presence
+    ///   authentication serves every entry until [reset_authentication](Store::reset_authentication).
+    ///   Not allowed with `cloud-sync`.
     pub fn new_with_configuration(config: &HashMap<&str, &str>) -> Result<Arc<Self>> {
-        let config = parse_attributes(&["access-group", "*cloud-sync"], Some(config))?;
+        let config = parse_attributes(
+            &["access-group", "*cloud-sync", "*shared-authentication"],
+            Some(config),
+        )?;
         let mut cloud_synchronize = false;
         let mut access_group = None;
         if let Some(option) = config.get("cloud-sync") {
@@ -392,10 +453,31 @@ impl Store {
                 access_group = Some(option.to_string());
             }
         }
-        Ok(Self::new_internal(access_group, cloud_synchronize))
+        let shared_authentication = config
+            .get("shared-authentication")
+            .is_some_and(|option| option.eq("true"));
+        if cloud_synchronize && shared_authentication {
+            return Err(cloud_sync_conflict("shared-authentication"));
+        }
+        Ok(Self::new_internal(
+            access_group,
+            cloud_synchronize,
+            shared_authentication,
+        ))
     }
 
-    fn new_internal(access_group: Option<String>, cloud_synchronize: bool) -> Arc<Self> {
+    /// Makes the next user-presence access prompt again, if the store shares authentication.
+    pub fn reset_authentication(&self) {
+        if let Some(authentication) = &self.authentication {
+            authentication.reset();
+        }
+    }
+
+    fn new_internal(
+        access_group: Option<String>,
+        cloud_synchronize: bool,
+        shared_authentication: bool,
+    ) -> Arc<Self> {
         let now = SystemTime::now();
         let elapsed = if now.lt(&UNIX_EPOCH) {
             UNIX_EPOCH.duration_since(now).unwrap()
@@ -411,6 +493,7 @@ impl Store {
             id,
             access_group,
             cloud_synchronize,
+            authentication: shared_authentication.then(Default::default),
         })
     }
 }
@@ -454,17 +537,15 @@ impl CredentialStoreApi for Store {
     ) -> Result<Entry> {
         let mods = parse_attributes(&["access-policy"], modifiers)?;
         if self.cloud_synchronize && mods.contains_key("access-policy") {
-            return Err(ErrorCode::Invalid(
-                "access-policy".to_string(),
-                "cannot be specified in a cloud-synchronized store".to_string(),
-            ));
+            return Err(cloud_sync_conflict("access-policy"));
         }
-        Cred::build(
+        Cred::build_entry(
             service,
             user,
             determine_access_policy(&mods)?,
             self.access_group.clone(),
             self.cloud_synchronize,
+            self.authentication.clone(),
         )
     }
 
@@ -504,10 +585,15 @@ impl CredentialStoreApi for Store {
             spec.get("access-group").map(String::as_str),
             cloud_sync,
             !show_ui,
+            self.authentication.as_deref(),
         )?;
         let mut results = Vec::new();
         for item in items.iter() {
-            results.push(Cred::build_from_search_result(item, cloud_sync)?)
+            results.push(Cred::build_from_search_result(
+                item,
+                cloud_sync,
+                self.authentication.as_ref(),
+            )?)
         }
         Ok(results)
     }
@@ -534,6 +620,7 @@ fn search_items(
     access_group: Option<&str>,
     cloud_sync: bool,
     suppress_ui: bool,
+    authentication: Option<&SharedAuthentication>,
 ) -> Result<Vec<item::SearchResult>> {
     let mut options = item::ItemSearchOptions::new();
     options
@@ -551,6 +638,9 @@ fn search_items(
         options.access_group(access_group);
     }
     options.cloud_sync(Some(cloud_sync));
+    if let Some(authentication) = authentication {
+        options.use_authentication_context(&authentication.current());
+    }
     #[cfg(target_os = "macos")]
     options.ignore_legacy_keychains();
     let result = options.search();
@@ -588,6 +678,13 @@ fn determine_access_policy(mods: &HashMap<String, String>) -> Result<AccessPolic
     } else {
         Ok(AccessPolicy::default())
     }
+}
+
+fn cloud_sync_conflict(key: &str) -> ErrorCode {
+    ErrorCode::Invalid(
+        key.to_string(),
+        "cannot be specified in a cloud-synchronized store".to_string(),
+    )
 }
 
 /// Map an iOS API error to a crate error with appropriate annotation
