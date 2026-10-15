@@ -84,3 +84,12 @@ jobs:
 
       - name: Package dry run
         run: cargo publish --dry-run --all-features
+
+  ci-success:
+    if: always()
+    needs: [ ci_stable, ci_msrv, package ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any CI job failed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
