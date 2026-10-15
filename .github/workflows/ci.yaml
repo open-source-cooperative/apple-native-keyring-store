@@ -83,4 +83,4 @@ jobs:
           cache: false
 
       - name: Package dry run
-        run: cargo publish --dry-run
+        run: cargo publish --dry-run --all-features
