@@ -103,12 +103,18 @@ use keyring_core::{
 /// well as the string "default".
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum AccessPolicy {
+    /// The item is accessible after the device has been unlocked for the first time.
     AfterFirstUnlock,
+    /// Like [`AccessPolicy::AfterFirstUnlock`], but the item never synchronizes to other devices.
     AfterFirstUnlockThisDeviceOnly,
+    /// The item is accessible while the device is unlocked.
     #[default]
     WhenUnlocked,
+    /// Like [`AccessPolicy::WhenUnlocked`], but the item never synchronizes to other devices.
     WhenUnlockedThisDeviceOnly,
+    /// Like [`AccessPolicy::WhenUnlockedThisDeviceOnly`], but also requires a device passcode.
     WhenPasscodeSetThisDeviceOnly,
+    /// Like [`AccessPolicy::WhenUnlocked`], but each access requires biometry or the device passcode.
     RequireUserPresence,
 }
 
@@ -144,10 +150,15 @@ impl From<&AccessPolicy> for ProtectionMode {
 /// [these guidelines](https://developer.apple.com/documentation/security/ksecattraccessgroup).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cred {
+    /// The service attribute of the credential.
     pub service: String,
+    /// The account attribute of the credential.
     pub account: String,
+    /// The access policy applied when the credential is created.
     pub access_policy: AccessPolicy,
+    /// The access group, or `None` for the app's default group.
     pub access_group: Option<String>,
+    /// Whether the credential is stored in the iCloud-synchronized store.
     pub cloud_synchronize: bool,
 }
 
