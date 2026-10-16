@@ -61,8 +61,11 @@ use keyring_core::{
 /// module to get at those attributes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cred {
+    /// The keychain that holds the credential.
     pub domain: MacKeychainDomain,
+    /// The service attribute of the credential.
     pub service: String,
+    /// The account attribute of the credential.
     pub account: String,
 }
 
@@ -309,9 +312,13 @@ impl CredentialStoreApi for Store {
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// The four pre-defined Mac keychains.
 pub enum MacKeychainDomain {
+    /// The user (login) keychain, the default.
     User,
+    /// The system keychain.
     System,
+    /// The common keychain.
     Common,
+    /// The dynamic keychain, available when removable media is attached.
     Dynamic,
 }
 
