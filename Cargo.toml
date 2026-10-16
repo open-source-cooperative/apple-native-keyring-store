@@ -49,6 +49,9 @@ env_logger = "0.11"
 linkme = "0.3"
 sudo = "0.6"
 
+[lints.rust]
+unreachable_pub = "warn"
+
 [package.metadata.docs.rs]
 targets = ["aarch64-apple-darwin", "aarch64-apple-ios"]
 all-features = true
