@@ -14,7 +14,7 @@ readme = "README.md"
 
 [features]
 keychain = ["security-framework"]
-protected = ["security-framework/OSX_10_15"]
+protected = ["security-framework/OSX_10_15", "security-framework/local-authentication"]
 
 [[example]]
 name = "operations"
@@ -42,6 +42,9 @@ version = "1"
 version = "3.7"
 optional = true
 # path = "../rust-security-framework/security-framework"
+
+[patch.crates-io]
+security-framework = { git = "https://github.com/LucaCappelletti94/rust-security-framework.git", branch = "upstream/typed-authentication-context" }
 
 [dev-dependencies]
 fastrand = "2"
