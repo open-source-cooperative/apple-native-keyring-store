@@ -1,0 +1,92 @@
+name: Coverage
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: macos-latest
+    # Share the default target dir so the plain-cargo simulator build and cargo-llvm-cov collect from the same artifacts
+    env:
+      CARGO_LLVM_COV_TARGET_DIR: ${{ github.workspace }}/target
+
+    steps:
+      - name: Fetch head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install rust stable
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+          target: aarch64-apple-ios-sim
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Test the keychain store
+        run: cargo llvm-cov --no-report --lib --features keychain
+
+      - name: Test the ignored keychain store tests
+        run: cargo llvm-cov --no-report --lib --features keychain -- --ignored
+
+      - name: Build the protected store tests for the iOS simulator
+        id: build
+        # instrument-coverage and cfg=coverage are the flags cargo-llvm-cov applies
+        env:
+          RUSTFLAGS: -C instrument-coverage --cfg=coverage -C link-arg=-Wl,-sectcreate,__TEXT,__entitlements,${{ github.workspace }}/tests/ios-simulator.entitlements
+        run: |
+          cargo test --no-run --target aarch64-apple-ios-sim --lib --features protected
+          bin=$(find target/aarch64-apple-ios-sim/debug/deps -maxdepth 1 -type f -perm +111 -name 'apple_native_keyring_store-*' ! -name '*.*')
+          [ "$(printf '%s\n' "$bin" | wc -l)" -eq 1 ]
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
+
+      - name: Boot simulator
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available -j \
+            | jq -r '[.devices | to_entries[] | select(.key | contains("SimRuntime.iOS")) | .value[] | select(.name | startswith("iPhone"))][0].udid // empty')
+          [ -n "$udid" ]
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid"
+
+      - name: Run the protected store tests
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+          BIN: ${{ steps.build.outputs.bin }}
+        # The simulator does not inherit the host environment, so set the profile path in its launchd
+        run: |
+          xcrun simctl spawn "$UDID" launchctl setenv LLVM_PROFILE_FILE "${{ github.workspace }}/target/protected-sim.profraw"
+          xcrun simctl spawn "$UDID" "$BIN"
+
+      - name: Shut down simulator
+        if: always() && steps.sim.outputs.udid != ''
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: xcrun simctl shutdown "$UDID"
+
+      - name: Write the coverage report
+        run: cargo llvm-cov report --target aarch64-apple-ios-sim --ignore-filename-regex '_test\.rs$' --lcov --output-path lcov.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: lcov.info
+          disable_search: true
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}

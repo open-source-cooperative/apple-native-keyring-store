@@ -1,6 +1,6 @@
 # Apple-native Keyring Store
 
-[![build](https://github.com/open-source-cooperative/apple-native-keyring-store/actions/workflows/ci.yaml/badge.svg)](https://github.com/open-source-cooperative/apple-native-keyring-store/actions) [![crates.io](https://img.shields.io/crates/v/apple-native-keyring-store.svg)](https://crates.io/crates/apple-native-keyring-store) [![docs.rs](https://docs.rs/apple-native-keyring-store/badge.svg)](https://docs.rs/apple-native-keyring-store)
+[![build](https://github.com/open-source-cooperative/apple-native-keyring-store/actions/workflows/ci.yaml/badge.svg)](https://github.com/open-source-cooperative/apple-native-keyring-store/actions) [![crates.io](https://img.shields.io/crates/v/apple-native-keyring-store.svg)](https://crates.io/crates/apple-native-keyring-store) [![docs.rs](https://docs.rs/apple-native-keyring-store/badge.svg)](https://docs.rs/apple-native-keyring-store) [![codecov](https://codecov.io/gh/open-source-cooperative/apple-native-keyring-store/graph/badge.svg)](https://codecov.io/gh/open-source-cooperative/apple-native-keyring-store)
 
 This is a [keyring credential store provider](https://github.com/open-source-cooperative/keyring-rs/wiki/Keyring) that stores credentials in the native macOS and iOS secure stores. It’s compatible with [keyring-core](https://crates.io/crates/keyring-core) v0.7 and later.
 
