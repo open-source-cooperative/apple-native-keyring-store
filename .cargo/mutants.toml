@@ -1,0 +1,7 @@
+features = ["keychain"]
+exclude_globs = ["src/protected*"]
+exclude_re = [
+    "impl (std::fmt::)?Debug",
+    "impl (std::fmt::)?Display",
+    "::debug_fmt",
+]

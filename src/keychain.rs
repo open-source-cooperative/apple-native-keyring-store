@@ -371,6 +371,7 @@ fn get_keychain(domain: &MacKeychainDomain) -> Result<SecKeychain> {
 ///
 /// The macOS error code values used here are from
 /// [this reference](https://opensource.apple.com/source/libsecurity_keychain/libsecurity_keychain-78/lib/SecBase.h.auto.html)
+#[mutants::skip] // these are cases derived from use in field, not testing
 pub fn decode_error(err: Error) -> ErrorCode {
     match err.code() {
         // wrPermErr - usually from deleting something created by a different user or app
