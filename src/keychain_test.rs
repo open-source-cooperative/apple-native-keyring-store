@@ -283,9 +283,10 @@ fn test_simultaneous_create_set_then_move() {
 
 #[test]
 fn test_simultaneous_independent_create_set() {
+    let base = generate_random_string();
     let mut handles = vec![];
     for i in 0..10 {
-        let name = format!("thread_entry{i}");
+        let name = format!("{base}_thread_entry{i}");
         let test = move || {
             let entry = entry_new(&name, &name);
             entry.set_password(&name).unwrap();
