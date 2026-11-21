@@ -1,7 +1,13 @@
 //! Protected store tests, run on the iOS simulator with the entitlements in
 //! `tests/ios-simulator.entitlements` linked into the test binary.
 //!
-//! User presence is not covered because the simulator does not enforce it.
+//! We use the same tests as for the keychain, which gets us basic coverage.
+//! We can't do tests of iCloud syncing or user presence or multiple access
+//! groups because of simulator and entitlements limitations.
+//!
+//! The `protected_test.rs` example provides testing of these features
+//! if you run it in a developer-signed housing with the right entitlements.
+//! See that example for details.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
