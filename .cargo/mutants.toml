@@ -4,4 +4,5 @@ exclude_re = [
     "impl (std::fmt::)?Debug",
     "impl (std::fmt::)?Display",
     "::debug_fmt",
+    "decode_error",  # cases come from user reports, no way to test for them
 ]
