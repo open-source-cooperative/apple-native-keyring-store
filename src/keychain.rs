@@ -373,13 +373,24 @@ fn get_keychain(domain: &MacKeychainDomain) -> Result<SecKeychain> {
 /// [this reference](https://opensource.apple.com/source/libsecurity_keychain/libsecurity_keychain-78/lib/SecBase.h.auto.html)
 pub fn decode_error(err: Error) -> ErrorCode {
     match err.code() {
-        -61 => ErrorCode::NoStorageAccess(Box::new(err)), // Write permissions error
-        -25244 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecInvalidOwnerEdit
-        -25291 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecNotAvailable
-        -25292 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecReadOnly
-        -25294 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecNoSuchKeychain
-        -25295 => ErrorCode::NoStorageAccess(Box::new(err)), // errSecInvalidKeychain
-        -25300 => ErrorCode::NoEntry,                     // errSecItemNotFound
+        // wrPermErr - usually from deleting something created by a different user or app
+        -61 => ErrorCode::NoStorageAccess(Box::new(err)),
+        // errSecInvalidOwnerEdit - usually from a write attempt by a different user or app
+        -25244 => ErrorCode::NoStorageAccess(Box::new(err)),
+        // errSecNotAvailable - usually from a keychain that has been disabled or removed
+        -25291 => ErrorCode::NoStorageAccess(Box::new(err)),
+        // errSecReadOnly - usually from a keychain that has been set read-only
+        -25292 => ErrorCode::NoStorageAccess(Box::new(err)),
+        // errSecNoSuchKeychain - usually from a system operation on a non-system keychain
+        -25294 => ErrorCode::NoStorageAccess(Box::new(err)),
+        // errSecInvalidKeychain - usually means a corrupted keychain
+        -25295 => ErrorCode::NoStorageAccess(Box::new(err)),
+        // errSecDuplicateItem - usually from writing an item that exists but is read-only,
+        // so trying to write it tries to create a new item but that's a duplicate.
+        -25299 => ErrorCode::NoStorageAccess(Box::new(err)),
+        // errSecItemNotFound - usually no such item exists
+        -25300 => ErrorCode::NoEntry,
+        // anything not covered above we treat as a platform failure
         _ => ErrorCode::PlatformFailure(Box::new(err)),
     }
 }
