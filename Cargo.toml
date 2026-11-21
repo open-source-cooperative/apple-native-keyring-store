@@ -37,7 +37,7 @@ mutants = "0.0.4"
 
 [dependencies.keyring-core]
 version = "1.1"
-path = "../keyring-core"
+# path = "../keyring-core"
 
 [dependencies.security-framework]
 version = "3.7"
