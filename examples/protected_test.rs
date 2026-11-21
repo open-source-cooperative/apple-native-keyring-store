@@ -18,7 +18,11 @@ use std::sync::{Arc, LazyLock};
 
 use linkme::distributed_slice;
 
-use keyring_core::{CredentialStore, Entry, Error, api::CredentialPersistence, get_default_store};
+use keyring_core::{
+    CredentialStore, Entry, Error,
+    api::{CredentialPersistence, CredentialStoreApi},
+    get_default_store,
+};
 
 use apple_native_keyring_store::protected::Cred;
 use apple_native_keyring_store::protected::Store;
@@ -216,6 +220,10 @@ fn test_invalid_parameter() {
     sync_store
         .build("service", "user", Some(&mods))
         .unwrap_err();
+    let mods = HashMap::from([("shared-authentication", "maybe")]);
+    Store::new_with_configuration(&mods).unwrap_err();
+    let mods = HashMap::from([("cloud-sync", "true"), ("shared-authentication", "true")]);
+    Store::new_with_configuration(&mods).unwrap_err();
 }
 
 #[distributed_slice(TESTS)]
@@ -547,4 +555,27 @@ fn test_search_with_ui() {
     entry2.delete_credential().unwrap();
     let count = Entry::search(&spec).unwrap().len();
     assert_eq!(count, base_count);
+}
+
+// Expect two sheets, before and after the reset.
+#[distributed_slice(TESTS)]
+fn test_shared_authentication() {
+    let config = HashMap::from([("shared-authentication", "true")]);
+    let store = Store::new_with_configuration(&config).unwrap();
+    let mods = HashMap::from([("access-policy", "require-user-presence")]);
+    let name1 = generate_random_string();
+    let name2 = generate_random_string();
+    let entry1 = store.build(&name1, &name1, Some(&mods)).unwrap();
+    let entry2 = store.build(&name2, &name2, Some(&mods)).unwrap();
+    entry1.set_password("first").unwrap();
+    entry2.set_password("second").unwrap();
+    assert_eq!(entry1.get_password().unwrap(), "first");
+    assert_eq!(entry2.get_password().unwrap(), "second");
+    entry1.set_password("rotated").unwrap();
+    assert_eq!(entry1.get_password().unwrap(), "rotated");
+    store.reset_authentication();
+    assert_eq!(entry2.get_password().unwrap(), "second");
+    assert_eq!(entry1.get_password().unwrap(), "rotated");
+    entry1.delete_credential().unwrap();
+    entry2.delete_credential().unwrap();
 }
