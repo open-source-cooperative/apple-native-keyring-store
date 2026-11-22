@@ -1,24 +1,21 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Once};
+use std::sync::{Arc, OnceLock};
 
-use log::debug;
+use keyring_core::{CredentialStore, Entry, Error, Result, api::CredentialPersistence};
 
-use keyring_core::{CredentialStore, Entry, Error, api::CredentialPersistence, get_default_store};
+use super::keychain::{Cred, MacKeychainDomain, Store};
 
-use super::keychain::{Cred, Store};
+static STORE: OnceLock<Arc<CredentialStore>> = OnceLock::new();
 
-static SET_STORE: Once = Once::new();
-
-fn usually_goes_in_main() {
-    let _ = env_logger::builder().is_test(true).try_init();
-    keyring_core::set_default_store(Store::new().unwrap());
+fn get_store() -> &'static Arc<CredentialStore> {
+    STORE.get_or_init(|| Store::new().unwrap())
 }
 
 #[test]
 fn test_store_methods() {
-    SET_STORE.call_once(usually_goes_in_main);
-    let store = get_default_store().unwrap();
+    let store = get_store();
     let vendor1 = store.vendor();
+    assert!(vendor1.contains("macOS Keychain Store"));
     let id1 = store.id();
     let vendor2 = store.vendor();
     let id2 = store.id();
@@ -32,8 +29,13 @@ fn test_store_methods() {
 }
 
 fn entry_new(service: &str, user: &str) -> Entry {
-    SET_STORE.call_once(usually_goes_in_main);
-    Entry::new(service, user).unwrap_or_else(|err| {
+    Entry::new_in_store(get_store(), service, user).unwrap_or_else(|err| {
+        panic!("Couldn't create entry (service: {service}, user: {user}): {err:?}")
+    })
+}
+
+fn entry_new_with_modifiers(service: &str, user: &str, mods: &HashMap<&str, &str>) -> Entry {
+    Entry::new_in_store_with_modifiers(get_store(), service, user, mods).unwrap_or_else(|err| {
         panic!("Couldn't create entry (service: {service}, user: {user}): {err:?}")
     })
 }
@@ -101,11 +103,21 @@ fn test_round_trip_secret(case: &str, entry: &Entry, in_secret: &[u8]) {
 
 #[test]
 fn test_invalid_parameter() {
-    SET_STORE.call_once(usually_goes_in_main);
-    let entry = Entry::new("", "user");
+    let store = get_store();
+    let entry = store.build("", "user", None);
     assert!(matches!(entry, Err(Error::Invalid(_, _))));
-    let entry = Entry::new("service", "");
+    let entry = store.build("service", "", None);
     assert!(matches!(entry, Err(Error::Invalid(_, _))));
+}
+
+#[test]
+fn test_domains() {
+    let checker = |s: &str| -> Result<MacKeychainDomain> { s.parse() };
+    assert!(matches!(checker("uSEr"), Ok(MacKeychainDomain::User)));
+    assert!(matches!(checker("sYstEM"), Ok(MacKeychainDomain::System)));
+    assert!(matches!(checker("Common"), Ok(MacKeychainDomain::Common)));
+    assert!(matches!(checker("dyNaMiC"), Ok(MacKeychainDomain::Dynamic)));
+    assert!(matches!(checker("invalid"), Err(Error::Invalid(_, _))));
 }
 
 #[test]
@@ -341,37 +353,68 @@ fn test_simultaneous_multiple_create_delete_single_thread() {
 }
 
 #[test]
-#[ignore] // not safe on underpowered machines while other tests are running
-fn test_search() {
-    SET_STORE.call_once(usually_goes_in_main);
-    let all = Entry::search(&HashMap::new()).unwrap();
-    let all_count = all.len();
-    debug!("Search found {all_count} generic credentials before creating any.");
-    let none = Entry::search(&HashMap::from([("service", ""), ("user", "")])).unwrap();
-    assert!(none.is_empty());
+fn test_specify_domain() {
     let name = generate_random_string();
+    // build in the system keychain - we won't have the ability to create or delete entries
+    let mut mods = HashMap::from([("keychain", "System")]);
+    let entry = entry_new_with_modifiers(&name, &name, &mods);
+    entry.set_password(&name).unwrap_err();
+    entry.delete_credential().unwrap_err();
+    // build in the user keychain - should work as usual
+    mods = HashMap::from([("keychain", "User")]);
+    let entry = entry_new_with_modifiers(&name, &name, &mods);
+    entry.set_password(&name).unwrap();
+    let stored_password = entry.get_password().unwrap();
+    assert_eq!(stored_password, name);
+    entry.delete_credential().unwrap();
+    assert!(matches!(entry.get_password(), Err(Error::NoEntry)));
+}
+
+#[test]
+fn test_search() {
+    let store = get_store();
+    let name = generate_random_string();
+    let e0 = entry_new(&name, &name);
+    e0.set_password("e0").unwrap();
+    let mut all = store
+        .search(&HashMap::from([("service", name.as_str())]))
+        .unwrap();
+    assert_eq!(all.len(), 1);
+    let none = store
+        .search(&HashMap::from([("service", ""), ("user", "")]))
+        .unwrap();
+    assert!(none.is_empty());
     let bar = format!("{name}-bar");
     let bam = format!("{name}-bam");
     let bam_upper = format!("{name}-BAM");
     let e1 = entry_new(&name, &bar);
     e1.set_password("e1").unwrap();
-    // uncomment these two lines only if test-threads=1
-    // let all = Entry::search(&HashMap::new()).unwrap();
-    // assert_eq!(all.len(), all_count + 1);
+    all = store
+        .search(&HashMap::from([("service", name.as_str())]))
+        .unwrap();
+    assert_eq!(all.len(), 2);
     let e2 = entry_new(&name, &bam);
     e2.set_password("e2").unwrap();
-    let zero = Entry::search(&HashMap::from([("user", bam_upper.as_str())])).unwrap();
+    let zero = store
+        .search(&HashMap::from([("user", bam_upper.as_str())]))
+        .unwrap();
     assert_eq!(zero.len(), 0);
-    let one = Entry::search(&HashMap::from([("user", bam.as_str())])).unwrap();
+    let one = store
+        .search(&HashMap::from([("user", bam.as_str())]))
+        .unwrap();
     assert_eq!(one.len(), 1);
-    let one = Entry::search(&HashMap::from([
-        ("service", name.as_str()),
-        ("user", bar.as_ref()),
-    ]))
-    .unwrap();
+    let one = store
+        .search(&HashMap::from([
+            ("service", name.as_str()),
+            ("user", bar.as_str()),
+        ]))
+        .unwrap();
     assert_eq!(one.len(), 1);
-    let two = Entry::search(&HashMap::from([("service", name.as_str())])).unwrap();
-    assert_eq!(two.len(), 2);
+    all = store
+        .search(&HashMap::from([("service", name.as_str())]))
+        .unwrap();
+    assert_eq!(all.len(), 3);
+    e0.delete_credential().unwrap();
     e1.delete_credential().unwrap();
     e2.delete_credential().unwrap();
 }

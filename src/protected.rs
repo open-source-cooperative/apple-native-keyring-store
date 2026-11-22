@@ -38,15 +38,15 @@ sandboxed applications can be given access to multiple access groups. When an
 application has been configured to have multiple access groups, its protected
 store will search across all those access groups for a given entry, so ambiguity
 is possible. To avoid this, an application can create one store for each available
-access group, passing the access group name as the value of the`access-group`
+access group, passing the access group name as the value of the `access-group`
 modifier when creating each store. (This is also how such an application can specify
 which group it wants to use when creating a new credential.)
 
-If you have retrieved a wrapper entry and want to know the access group of the
-underlying item, you can downcast the wrapper entry to the `Cred` type and look
-at its `access_group` field. For more information about this, see the many Apple
-developer docs about sharing access groups among applications. Also look at the
-`tests` example code for the tests of ambiguity.
+If you have retrieved a wrapper entry and want to know the access group of the underlying
+item, you can downcast the wrapper entry to the `Cred` type and look at its `access_group`
+field. For more information about this, see the many Apple developer docs about sharing
+access groups among applications. Also look at the `test_shared_access_groups` entry in
+the `protected_test.rs` example for the tests of ambiguity.
 
 ## Access control
 
@@ -359,7 +359,7 @@ impl CredentialApi for Cred {
     }
 }
 
-/// The builder for iOS keychain credentials
+/// The builder for protected data credentials
 pub struct Store {
     id: String,
     access_group: Option<String>,
@@ -497,12 +497,7 @@ impl CredentialStoreApi for Store {
     /// by setting its password.
     fn search(&self, spec: &HashMap<&str, &str>) -> Result<Vec<Entry>> {
         let spec = parse_attributes(
-            &[
-                "service",
-                "account",
-                "access-group",
-                "*show-authentication-ui",
-            ],
+            &["service", "user", "access-group", "*show-authentication-ui"],
             Some(spec),
         )?;
         let cloud_sync = self.cloud_synchronize;
@@ -511,7 +506,7 @@ impl CredentialStoreApi for Store {
             .is_some_and(|s| s.eq("true"));
         let items = search_items(
             spec.get("service").map(String::as_str),
-            spec.get("account").map(String::as_str),
+            spec.get("user").map(String::as_str),
             spec.get("access-group").map(String::as_str),
             cloud_sync,
             !show_ui,
@@ -541,7 +536,7 @@ impl CredentialStoreApi for Store {
 
 fn search_items(
     service: Option<&str>,
-    account: Option<&str>,
+    user: Option<&str>,
     access_group: Option<&str>,
     cloud_sync: bool,
     suppress_ui: bool,
@@ -555,7 +550,7 @@ fn search_items(
     if let Some(service) = service {
         options.service(service);
     }
-    if let Some(account) = account {
+    if let Some(account) = user {
         options.account(account);
     }
     if let Some(access_group) = access_group {
